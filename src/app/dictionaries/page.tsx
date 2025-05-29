@@ -144,11 +144,9 @@ export default function DictionariesPage() {
                     />
                   </TableCell>
                   <TableCell className="text-right space-x-2">
-                    <DialogTrigger asChild>
-                      <Button variant="ghost" size="icon" onClick={() => handleViewDictionary(dict)}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                    </DialogTrigger>
+                    <Button variant="ghost" size="icon" onClick={() => handleViewDictionary(dict)}>
+                      <Eye className="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                       <Trash2 className="h-4 w-4" />
                     </Button>
