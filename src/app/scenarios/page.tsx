@@ -30,8 +30,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area'; // Added ScrollArea
-import { cn } from '@/lib/utils'; // Added cn
+import { ScrollArea } from '@/components/ui/scroll-area'; 
+import { cn } from '@/lib/utils';
 
 type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end';
 
@@ -114,9 +114,9 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   sql: Database,
   delay: Clock,
   loop_start: Repeat,
-  loop_end: Repeat, // Consider different icon for end if needed
+  loop_end: Repeat, 
   conditional_start: GitBranch,
-  conditional_end: GitBranch, // Consider different icon for end
+  conditional_end: GitBranch, 
 };
 
 export default function ScenariosPage() {
@@ -390,9 +390,9 @@ export default function ScenariosPage() {
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
-            <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden"> {/* Changed overflow-y-auto to overflow-hidden */}
+            <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden">
               {/* Left Panel: Scenario Details & Variables */}
-              <ScrollArea className="md:col-span-1 h-full"> {/* Added ScrollArea for left panel */}
+              <ScrollArea className="md:col-span-1 h-full"> 
                 <div className="space-y-4 pr-4">
                   <Card>
                     <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
@@ -444,7 +444,7 @@ export default function ScenariosPage() {
               </ScrollArea>
 
               {/* Right Panel: Scenario Steps */}
-              <div className="md:col-span-2 flex flex-col h-full"> {/* Changed to flex flex-col and h-full */}
+              <div className="md:col-span-2 flex flex-col h-full"> 
                 <div className="flex justify-between items-center mb-2 flex-shrink-0">
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
                     <DropdownMenu>
@@ -463,7 +463,7 @@ export default function ScenariosPage() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                 </div>
-                <ScrollArea className="flex-grow pr-2"> {/* ScrollArea for steps */}
+                <ScrollArea className="flex-grow pr-2"> 
                   <div className="space-y-4">
                     {editingScenario.steps.map((step, index) => {
                       const StepIcon = stepIcons[step.type];
@@ -572,3 +572,5 @@ export default function ScenariosPage() {
     </div>
   );
 }
+
+    
