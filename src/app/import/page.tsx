@@ -35,7 +35,6 @@ export default function ImportPage() {
     setIsLoading(true);
     // Simulate parsing delay and logic
     setTimeout(() => {
-      // Basic mock parsing logic - replace with actual robust parsing
       let attributes: ParsedAttribute[] = [];
       let warnings: string[] = [];
       let formatDetected = "Unknown";
