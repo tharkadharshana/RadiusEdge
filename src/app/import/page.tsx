@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Upload, AlertTriangle, CheckCircle, FileJson, FileTerminal, FileCode } from 'lucide-react';
+import { Upload, AlertTriangle, CheckCircle, FileJson, FileTerminal, FileCode, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface ParsedAttribute {
