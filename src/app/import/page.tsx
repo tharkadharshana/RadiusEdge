@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Upload, AlertTriangle, CheckCircle, FileJson, FileTerminal, FileCode, Loader2 } from 'lucide-react';
-import { useToast } from "@/hooks/use-toast";
+// import { useToast } from "@/hooks/use-toast"; // Commented out for diagnosis
 
 interface PacketAttribute {
   id: string;
@@ -23,85 +23,22 @@ export default function ImportPage() {
   const [parsedAttributes, setParsedAttributes] = useState<PacketAttribute[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [detectedFormat, setDetectedFormat] = useState<string | null>(null);
-  const { toast } = useToast();
+  const [detectedFormatState, setDetectedFormatState] = useState<string | null>(null);
+  // const { toast } = useToast(); // Commented out for diagnosis
 
-  const handleParsePacketData = () => {
+  // Simplified function body for diagnosis
+  function handleParsePacketData() {
     setIsLoading(true);
     setParseError(null);
     setParsedAttributes([]);
-    setDetectedFormat(null);
-
-    try {
-      const trimmedInput = rawInput.trim();
-      if (!trimmedInput) {
-        throw new Error("Input is empty.");
-      }
-
-      let attributes: PacketAttribute[] = [];
-      // Try parsing as JSON first
-      try {
-        const jsonData = JSON.parse(trimmedInput);
-        if (typeof jsonData === 'object' && jsonData !== null && !Array.isArray(jsonData)) {
-          attributes = Object.entries(jsonData).map(([name, value], index) => ({
-            id: `attr-json-${index}`, name, value: String(value),
-          }));
-          setDetectedFormat('json');
-        } else if (Array.isArray(jsonData) && jsonData.every(item => typeof item.name === 'string' && typeof item.value !== 'undefined')) {
-            attributes = jsonData.map((item, index) => ({
-                id: `attr-json-arr-${index}`, name: item.name, value: String(item.value)
-            }));
-            setDetectedFormat('json_array_of_objects');
-        } else {
-          throw new Error("Not a recognized JSON structure for direct parsing.");
-        }
-      } catch (e) {
-        // Fallback to flat file (name = value)
-        const lines = trimmedInput.split('\n').filter(line => line.trim() !== '');
-        if (lines.length > 0 && lines.every(line => line.includes('='))) {
-          attributes = lines.map((line, index) => {
-            const parts = line.split('=', 2);
-            const name = parts[0].trim();
-            let value = parts.length > 1 ? parts[1].trim() : '';
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.substring(1, value.length - 1);
-            }
-            return { id: `attr-flat-${index}`, name, value };
-          });
-          setDetectedFormat('freeradius_flat');
-        } else {
-          if (attributes.length === 0) {
-             throw new Error("Could not determine packet format. Please use JSON or 'name = value' pairs per line.");
-          }
-        }
-      }
-      
-      if (attributes.length === 0) {
-        throw new Error("No attributes parsed. Ensure format is JSON or 'name = value' pairs.");
-      }
-
-      setParsedAttributes(attributes);
-      toast({
-        title: "Data Parsed Successfully",
-        description: `Detected format: ${detectedFormat || 'unknown'}. Parsed ${attributes.length} attributes.`,
-        variant: "default",
-      });
-
-    } catch (e: any) {
-      setParseError(e.message);
-      setDetectedFormat(null);
-      setParsedAttributes([]);
-      toast({
-        title: "Parsing Failed",
-        description: e.message,
-        variant: "destructive",
-      });
-    } finally {
+    setDetectedFormatState(null);
+    // toast({ title: "Parsing Initiated (Simplified)", description: "Actual parsing logic is currently bypassed for diagnosis." });
+    setTimeout(() => {
       setIsLoading(false);
-    }
-  };
-  
-  const getFormatIcon = (format: string | null) => {
+    }, 100);
+  }
+
+  function getFormatIcon(format: string | null) {
     switch (format) {
       case 'json':
       case 'json_array_of_objects':
@@ -109,9 +46,9 @@ export default function ImportPage() {
       case 'freeradius_flat':
         return <FileCode className="h-5 w-5" />;
       default:
-        return null; 
+        return null;
     }
-  };
+  }
 
   return (
     <div className="space-y-8">
@@ -155,11 +92,11 @@ export default function ImportPage() {
           <CardHeader>
             <div className="flex justify-between items-center">
                 <CardTitle className="flex items-center gap-2">
-                {getFormatIcon(detectedFormat)}
+                {getFormatIcon(detectedFormatState)}
                 Parsed Attributes ({parsedAttributes.length})
                 </CardTitle>
             </div>
-            {detectedFormat && <CardDescription>Detected format: <span className="font-semibold">{detectedFormat}</span></CardDescription>}
+            {detectedFormatState && <CardDescription>Detected format: <span className="font-semibold">{detectedFormatState}</span></CardDescription>}
           </CardHeader>
           {parsedAttributes.length > 0 && (
             <CardContent>
