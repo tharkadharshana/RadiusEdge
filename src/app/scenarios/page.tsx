@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Shuffle, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -33,18 +33,36 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end';
 
+interface ExpectedReplyAttribute {
+  id: string;
+  name: string;
+  value: string;
+}
+
 interface ScenarioStep {
   id: string;
   type: ScenarioStepType;
-  name: string; // e.g., "Send Access-Request", "Verify User in DB", "Wait 5s"
-  details: Record<string, any>; // packet_id, query, duration_ms, condition, iterations
+  name: string;
+  details: Record<string, any> & {
+    packet_id?: string;
+    expectedAttributes?: ExpectedReplyAttribute[];
+    timeout?: number;
+    retries?: number;
+    query?: string;
+    expect_column?: string;
+    expect_value?: string;
+    connection?: string;
+    duration_ms?: number;
+    iterations?: number;
+    condition?: string;
+  };
 }
 
 interface ScenarioVariable {
   id: string;
   name: string;
   type: 'static' | 'random_string' | 'random_number' | 'list';
-  value: string; // Static value, pattern, range, or comma-separated list
+  value: string;
 }
 
 interface Scenario {
@@ -58,32 +76,32 @@ interface Scenario {
 }
 
 const initialScenarios: Scenario[] = [
-  { 
-    id: 'scn1', 
-    name: '3GPP Full Auth Flow', 
-    description: 'Simulates a complete 3GPP authentication and accounting cycle.', 
+  {
+    id: 'scn1',
+    name: '3GPP Full Auth Flow',
+    description: 'Simulates a complete 3GPP authentication and accounting cycle.',
     variables: [{id: 'var1', name: 'imsi', type: 'random_string', value: '3134600000000[0-9]{3}'}],
     steps: [
-      { id: 's1', type: 'radius', name: 'Send Access-Request', details: { packet: '3gpp_auth_req', expect: 'Access-Accept', timeout: 3000, retries: 2 } },
+      { id: 's1', type: 'radius', name: 'Send Access-Request', details: { packet_id: '3gpp_auth_req', expectedAttributes: [{id: 'exp1_1', name: 'Framed-IP-Address', value: '192.168.1.100'}], timeout: 3000, retries: 2 } },
       { id: 's2', type: 'sql', name: 'Verify Session Status', details: { query: "SELECT status FROM sessions WHERE imsi = ${imsi}", expect_column: "status", expect_value: "active", connection: "prod_db" } },
       { id: 's3', type: 'delay', name: 'Wait for Session Duration', details: { duration_ms: 60000 } },
-      { id: 's4', type: 'radius', name: 'Send Interim-Update', details: { packet: '3gpp_interim_acct', expect: 'Accounting-Response' } },
-    ], 
+      { id: 's4', type: 'radius', name: 'Send Interim-Update', details: { packet_id: '3gpp_interim_acct', expectedAttributes: [], timeout: 3000, retries: 1 } },
+    ],
     lastModified: '2024-07-20',
     tags: ['3GPP', 'E2E', 'Auth', 'Acct']
   },
-  { 
-    id: 'scn2', 
-    name: 'WiFi EAP-TTLS Authentication', 
-    description: 'Tests EAP-TTLS authentication for a WiFi hotspot.', 
+  {
+    id: 'scn2',
+    name: 'WiFi EAP-TTLS Authentication',
+    description: 'Tests EAP-TTLS authentication for a WiFi hotspot.',
     variables: [],
     steps: [
-        { id: 's1', type: 'radius', name: 'EAP-Start', details: { packet: 'eap_start_req' } },
+        { id: 's1', type: 'radius', name: 'EAP-Start', details: { packet_id: 'eap_start_req', expectedAttributes: [] } },
         { id: 's2', type: 'loop_start', name: 'EAP Exchange Loop', details: { iterations: 5, condition: "response_contains_eap_challenge" } },
-        { id: 's3', type: 'radius', name: 'EAP-Response', details: { packet: 'eap_response_phase2' } },
+        { id: 's3', type: 'radius', name: 'EAP-Response', details: { packet_id: 'eap_response_phase2', expectedAttributes: [] } },
         { id: 's4', type: 'loop_end', name: 'End EAP Exchange', details: {} },
-        { id: 's5', type: 'radius', name: 'EAP-Success Check', details: { expect: 'Access-Accept', eap_type: 'Success' } },
-    ], 
+        { id: 's5', type: 'radius', name: 'EAP-Success Check', details: { packet_id: '', expectedAttributes: [{id: 'exp2_1', name:'EAP-Type', value: 'Success'}], timeout: 5000 } },
+    ],
     lastModified: '2024-07-18',
     tags: ['WiFi', 'EAP', 'Auth']
   },
@@ -94,9 +112,9 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   sql: Database,
   delay: Clock,
   loop_start: Repeat,
-  loop_end: Repeat, // Could use a different one like SkipForward for end
+  loop_end: Repeat,
   conditional_start: GitBranch,
-  conditional_end: GitBranch, // Could use SkipForward for end
+  conditional_end: GitBranch,
 };
 
 export default function ScenariosPage() {
@@ -104,13 +122,11 @@ export default function ScenariosPage() {
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
   const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   useEffect(() => {
     const templateId = searchParams.get('template');
     if (templateId) {
-      // Logic to load a scenario from a template
-      // For now, just create a new one and prefill name
-      const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' : 
+      const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' :
                            templateId === 'wifi-eap' ? 'Wi-Fi EAP-TTLS (from template)' :
                            'New Scenario (from template)';
       createNewScenario(templateName);
@@ -126,17 +142,19 @@ export default function ScenariosPage() {
   );
 
   const handleEditScenario = (scenario: Scenario | null) => {
-    setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null); // Deep copy
+    setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
   };
 
   const handleSaveScenario = () => {
     if (editingScenario) {
-      if (editingScenario.id === 'new') { // New scenario
-        setScenarios(prev => [...prev, { ...editingScenario, id: `scn${Date.now()}`, lastModified: new Date().toISOString().split('T')[0] }]);
-      } else { // Existing scenario
-        setScenarios(prev => prev.map(s => s.id === editingScenario.id ? { ...editingScenario, lastModified: new Date().toISOString().split('T')[0] } : s));
+      const now = new Date().toISOString().split('T')[0];
+      const scenarioToSave = { ...editingScenario, lastModified: now };
+      if (editingScenario.id === 'new') {
+        setScenarios(prev => [...prev, { ...scenarioToSave, id: `scn${Date.now()}` }]);
+      } else {
+        setScenarios(prev => prev.map(s => s.id === editingScenario.id ? scenarioToSave : s));
       }
-      handleEditScenario(null); // Close dialog
+      handleEditScenario(null);
     }
   };
 
@@ -146,12 +164,12 @@ export default function ScenariosPage() {
       name: name,
       description: '',
       variables: [],
-      steps: [{ id: `step_new_1`, type: 'radius', name: 'Initial Access-Request', details: { packet_id: '', expect: 'Access-Accept'} }],
+      steps: [{ id: `step_new_1`, type: 'radius', name: 'Initial RADIUS Request', details: { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 } }],
       lastModified: new Date().toISOString().split('T')[0],
       tags: [],
     });
   };
-  
+
   const addVariable = () => {
     if (editingScenario) {
       setEditingScenario(prev => prev ? {
@@ -181,13 +199,31 @@ export default function ScenariosPage() {
   const addStep = (type: ScenarioStepType) => {
     if (editingScenario) {
       let stepName = 'New Step';
-      if (type === 'radius') stepName = 'New RADIUS Request';
-      else if (type === 'sql') stepName = 'New SQL Validation';
-      else if (type === 'delay') stepName = 'New Delay';
-      
+      let stepDetails: ScenarioStep['details'] = {};
+      if (type === 'radius') {
+        stepName = 'New RADIUS Request';
+        stepDetails = { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 };
+      } else if (type === 'sql') {
+        stepName = 'New SQL Validation';
+        stepDetails = { query: '', expect_column: '', expect_value: '', connection: '' };
+      } else if (type === 'delay') {
+        stepName = 'New Delay';
+        stepDetails = { duration_ms: 1000 };
+      } else if (type === 'loop_start') {
+        stepName = 'Loop Start';
+        stepDetails = { iterations: 3, condition: '' };
+      } else if (type === 'loop_end') {
+        stepName = 'Loop End';
+      } else if (type === 'conditional_start') {
+        stepName = 'Conditional Start';
+        stepDetails = { condition: '' };
+      } else if (type === 'conditional_end') {
+        stepName = 'Conditional End';
+      }
+
       setEditingScenario(prev => prev ? {
         ...prev,
-        steps: [...prev.steps, {id: `step${Date.now()}`, type, name: stepName, details: {}}]
+        steps: [...prev.steps, {id: `step${Date.now()}`, type, name: stepName, details: stepDetails}]
       } : null);
     }
   };
@@ -200,16 +236,56 @@ export default function ScenariosPage() {
       } : null);
     }
   };
-  
-  const handleStepChange = (index: number, field: 'name' | 'details', value: any) => {
+
+  const handleStepChange = (stepIndex: number, field: 'name' | 'details', value: any) => {
      if (editingScenario) {
       const updatedSteps = [...editingScenario.steps];
       if (field === 'details') {
-         updatedSteps[index].details = {...updatedSteps[index].details, ...value};
+         updatedSteps[stepIndex].details = {...updatedSteps[stepIndex].details, ...value};
       } else {
-          (updatedSteps[index] as any)[field] = value;
+          (updatedSteps[stepIndex] as any)[field] = value;
       }
       setEditingScenario({ ...editingScenario, steps: updatedSteps });
+    }
+  };
+
+  const addExpectedReplyAttribute = (stepIndex: number) => {
+    if (editingScenario) {
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'radius') {
+        const newAttribute: ExpectedReplyAttribute = { id: `exp_attr_${Date.now()}`, name: '', value: '' };
+        step.details.expectedAttributes = [...(step.details.expectedAttributes || []), newAttribute];
+        setEditingScenario({ ...editingScenario, steps: updatedSteps });
+      }
+    }
+  };
+
+  const removeExpectedReplyAttribute = (stepIndex: number, attributeId: string) => {
+    if (editingScenario) {
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'radius' && step.details.expectedAttributes) {
+        step.details.expectedAttributes = step.details.expectedAttributes.filter(attr => attr.id !== attributeId);
+        setEditingScenario({ ...editingScenario, steps: updatedSteps });
+      }
+    }
+  };
+
+  const handleExpectedReplyAttributeChange = (stepIndex: number, attributeId: string, field: 'name' | 'value', newValue: string) => {
+    if (editingScenario) {
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'radius' && step.details.expectedAttributes) {
+        const attrIndex = step.details.expectedAttributes.findIndex(attr => attr.id === attributeId);
+        if (attrIndex > -1) {
+          step.details.expectedAttributes[attrIndex] = {
+            ...step.details.expectedAttributes[attrIndex],
+            [field]: newValue
+          };
+          setEditingScenario({ ...editingScenario, steps: updatedSteps });
+        }
+      }
     }
   };
 
@@ -231,8 +307,8 @@ export default function ScenariosPage() {
           <CardTitle>Scenario Library</CardTitle>
            <div className="flex items-center gap-2 pt-2">
             <Search className="h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder="Search scenarios by name, description, or tag..." 
+            <Input
+              placeholder="Search scenarios by name, description, or tag..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="max-w-sm"
@@ -308,7 +384,7 @@ export default function ScenariosPage() {
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' ? 'Create New Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-              Define scenario properties, variables, and steps. Drag and drop to reorder steps (visual only for now).
+              Define scenario properties, variables, and steps.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
@@ -377,7 +453,7 @@ export default function ScenariosPage() {
                         <DropdownMenuItem onClick={() => addStep('delay')}><Clock className="mr-2 h-4 w-4" /> Delay</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => addStep('loop_start')}><Repeat className="mr-2 h-4 w-4" /> Loop Start</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => addStep('loop_end')}><Repeat className="mr-2 h-4 w-4 transform scale-x-[-1]" /> Loop End</DropdownMenuItem> {/* Icon flipped for visual cue */}
+                        <DropdownMenuItem onClick={() => addStep('loop_end')}><Repeat className="mr-2 h-4 w-4 transform scale-x-[-1]" /> Loop End</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('conditional_start')}><GitBranch className="mr-2 h-4 w-4" /> Conditional Start</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('conditional_end')}><GitBranch className="mr-2 h-4 w-4 transform scale-x-[-1]" /> Conditional End</DropdownMenuItem>
                       </DropdownMenuContent>
@@ -397,35 +473,76 @@ export default function ScenariosPage() {
                         <StepIcon className="h-5 w-5 text-primary" />
                         <Input value={step.name} onChange={(e) => handleStepChange(index, 'name', e.target.value)} className="text-md font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto" />
                       </div>
+
+                      {/* RADIUS Step Details */}
                       {step.type === 'radius' && (
-                        <div className="space-y-2 pl-7 text-sm">
-                           <Label>Packet Template:</Label><Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})}>
-                            <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
-                            <SelectContent><SelectItem value="pkt1">3GPP Access-Request</SelectItem><SelectItem value="pkt2">Cisco VoIP Acc Start</SelectItem></SelectContent>
-                          </Select>
-                          <Label>Expected Reply:</Label><Input placeholder="e.g., Access-Accept" value={step.details.expect} onChange={(e) => handleStepChange(index, 'details', {expect: e.target.value})}/>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value)})}/></div>
-                            <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value)})}/></div>
+                        <div className="space-y-3 pl-7 text-sm">
+                          <div>
+                            <Label>Packet Template:</Label>
+                            <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})}>
+                              <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="pkt1">3GPP Access-Request</SelectItem>
+                                <SelectItem value="pkt2">Cisco VoIP Acc Start</SelectItem>
+                                {/* TODO: Populate from actual packet library */}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <Label className="font-medium">Expected Reply Attributes:</Label>
+                          {(step.details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => (
+                            <div key={attr.id} className="flex items-end gap-2 p-2 border rounded-md bg-muted/20">
+                              <div className="flex-1">
+                                <Label htmlFor={`exp-attr-name-${attr.id}`} className="text-xs">Attribute Name</Label>
+                                <Input 
+                                  id={`exp-attr-name-${attr.id}`} 
+                                  value={attr.name} 
+                                  onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'name', e.target.value)}
+                                  placeholder="e.g., Framed-IP-Address"
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <Label htmlFor={`exp-attr-value-${attr.id}`} className="text-xs">Expected Value</Label>
+                                <Input 
+                                  id={`exp-attr-value-${attr.id}`} 
+                                  value={attr.value}
+                                  onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'value', e.target.value)}
+                                  placeholder="e.g., 192.168.0.1"
+                                />
+                              </div>
+                              <Button variant="ghost" size="icon" onClick={() => removeExpectedReplyAttribute(index, attr.id)} className="text-destructive hover:text-destructive h-8 w-8">
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                          <Button variant="outline" size="sm" onClick={() => addExpectedReplyAttribute(index)}>
+                            <PlusCircle className="mr-2 h-3 w-3" /> Add Expected Attribute
+                          </Button>
+                          
+                          <div className="grid grid-cols-2 gap-2 pt-2">
+                            <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })}/></div>
+                            <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })}/></div>
                           </div>
                         </div>
                       )}
+
+                      {/* SQL Step Details */}
                       {step.type === 'sql' && (
                         <div className="space-y-2 pl-7 text-sm">
-                          <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} />
-                          <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1]}) }} />
-                          <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} />
+                          <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} />
+                          <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} />
+                          <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} />
                         </div>
                       )}
                       {step.type === 'delay' && (
                         <div className="space-y-2 pl-7 text-sm">
-                          <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value)})} />
+                          <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms || ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} />
                         </div>
                       )}
                        {(step.type === 'loop_start' || step.type === 'conditional_start') && (
                         <div className="space-y-2 pl-7 text-sm">
-                          {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value)})} /></div>}
-                          <Label>Condition (optional):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
+                          {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} /></div>}
+                          <Label>Condition (optional):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
                         </div>
                       )}
                       {(step.type === 'loop_end' || step.type === 'conditional_end') && (
