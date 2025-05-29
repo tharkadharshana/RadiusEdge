@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Shuffle, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Shuffle, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -447,3 +447,4 @@ export default function ScenariosPage() {
     </div>
   );
 }
+
