@@ -30,6 +30,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ScrollArea } from '@/components/ui/scroll-area'; // Added ScrollArea
+import { cn } from '@/lib/utils'; // Added cn
 
 type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end';
 
@@ -96,11 +98,11 @@ const initialScenarios: Scenario[] = [
     description: 'Tests EAP-TTLS authentication for a WiFi hotspot.',
     variables: [],
     steps: [
-        { id: 's1', type: 'radius', name: 'EAP-Start', details: { packet_id: 'eap_start_req', expectedAttributes: [] } },
+        { id: 's1', type: 'radius', name: 'EAP-Start', details: { packet_id: 'eap_start_req', expectedAttributes: [], timeout: 3000, retries: 2 } },
         { id: 's2', type: 'loop_start', name: 'EAP Exchange Loop', details: { iterations: 5, condition: "response_contains_eap_challenge" } },
-        { id: 's3', type: 'radius', name: 'EAP-Response', details: { packet_id: 'eap_response_phase2', expectedAttributes: [] } },
+        { id: 's3', type: 'radius', name: 'EAP-Response', details: { packet_id: 'eap_response_phase2', expectedAttributes: [], timeout: 3000, retries: 2 } },
         { id: 's4', type: 'loop_end', name: 'End EAP Exchange', details: {} },
-        { id: 's5', type: 'radius', name: 'EAP-Success Check', details: { packet_id: '', expectedAttributes: [{id: 'exp2_1', name:'EAP-Type', value: 'Success'}], timeout: 5000 } },
+        { id: 's5', type: 'radius', name: 'EAP-Success Check', details: { packet_id: '', expectedAttributes: [{id: 'exp2_1', name:'EAP-Type', value: 'Success'}], timeout: 5000, retries: 2 } },
     ],
     lastModified: '2024-07-18',
     tags: ['WiFi', 'EAP', 'Auth']
@@ -112,9 +114,9 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   sql: Database,
   delay: Clock,
   loop_start: Repeat,
-  loop_end: Repeat,
+  loop_end: Repeat, // Consider different icon for end if needed
   conditional_start: GitBranch,
-  conditional_end: GitBranch,
+  conditional_end: GitBranch, // Consider different icon for end
 };
 
 export default function ScenariosPage() {
@@ -388,62 +390,64 @@ export default function ScenariosPage() {
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
-            <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-y-auto pr-2">
+            <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden"> {/* Changed overflow-y-auto to overflow-hidden */}
               {/* Left Panel: Scenario Details & Variables */}
-              <div className="md:col-span-1 space-y-4 border-r md:pr-4 overflow-y-auto">
-                <Card>
-                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
-                  <CardContent className="space-y-3">
-                    <div>
-                      <Label htmlFor="scenario-name">Scenario Name</Label>
-                      <Input id="scenario-name" value={editingScenario.name} onChange={(e) => setEditingScenario({ ...editingScenario, name: e.target.value })} />
-                    </div>
-                    <div>
-                      <Label htmlFor="scenario-description">Description</Label>
-                      <Textarea id="scenario-description" value={editingScenario.description} onChange={(e) => setEditingScenario({ ...editingScenario, description: e.target.value })} />
-                    </div>
-                     <div>
-                      <Label htmlFor="scenario-tags">Tags (comma-separated)</Label>
-                      <Input id="scenario-tags" value={editingScenario.tags.join(', ')} onChange={(e) => setEditingScenario({ ...editingScenario, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })} placeholder="e.g., Auth, 3GPP" />
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Variable className="h-5 w-5 text-primary"/>Variables</CardTitle></CardHeader>
-                  <CardContent className="space-y-3">
-                    {editingScenario.variables.map((variable, index) => (
-                      <Card key={variable.id} className="p-3 bg-muted/30">
-                        <div className="flex justify-between items-center mb-1">
-                           <Label htmlFor={`var-name-${index}`} className="text-xs font-semibold">Variable {index + 1}</Label>
-                           <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive">
-                              <X className="h-3 w-3" />
-                           </Button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Input placeholder="Name" value={variable.name} onChange={(e) => handleVariableChange(index, 'name', e.target.value)} />
-                          <Select value={variable.type} onValueChange={(val) => handleVariableChange(index, 'type', val)}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="static">Static</SelectItem>
-                              <SelectItem value="random_string">Random String</SelectItem>
-                              <SelectItem value="random_number">Random Number</SelectItem>
-                              <SelectItem value="list">List</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <Input className="mt-1" placeholder="Value / Pattern / List (CSV)" value={variable.value} onChange={(e) => handleVariableChange(index, 'value', e.target.value)} />
-                      </Card>
-                    ))}
-                    <Button variant="outline" size="sm" onClick={addVariable} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Variable</Button>
-                  </CardContent>
-                </Card>
-              </div>
+              <ScrollArea className="md:col-span-1 h-full"> {/* Added ScrollArea for left panel */}
+                <div className="space-y-4 pr-4">
+                  <Card>
+                    <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      <div>
+                        <Label htmlFor="scenario-name">Scenario Name</Label>
+                        <Input id="scenario-name" value={editingScenario.name} onChange={(e) => setEditingScenario({ ...editingScenario, name: e.target.value })} />
+                      </div>
+                      <div>
+                        <Label htmlFor="scenario-description">Description</Label>
+                        <Textarea id="scenario-description" value={editingScenario.description} onChange={(e) => setEditingScenario({ ...editingScenario, description: e.target.value })} />
+                      </div>
+                      <div>
+                        <Label htmlFor="scenario-tags">Tags (comma-separated)</Label>
+                        <Input id="scenario-tags" value={editingScenario.tags.join(', ')} onChange={(e) => setEditingScenario({ ...editingScenario, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })} placeholder="e.g., Auth, 3GPP" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Variable className="h-5 w-5 text-primary"/>Variables</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      {editingScenario.variables.map((variable, index) => (
+                        <Card key={variable.id} className="p-3 bg-muted/30">
+                          <div className="flex justify-between items-center mb-1">
+                            <Label htmlFor={`var-name-${index}`} className="text-xs font-semibold">Variable {index + 1}</Label>
+                            <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive">
+                                <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input placeholder="Name" value={variable.name} onChange={(e) => handleVariableChange(index, 'name', e.target.value)} />
+                            <Select value={variable.type} onValueChange={(val) => handleVariableChange(index, 'type', val)}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="static">Static</SelectItem>
+                                <SelectItem value="random_string">Random String</SelectItem>
+                                <SelectItem value="random_number">Random Number</SelectItem>
+                                <SelectItem value="list">List</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Input className="mt-1" placeholder="Value / Pattern / List (CSV)" value={variable.value} onChange={(e) => handleVariableChange(index, 'value', e.target.value)} />
+                        </Card>
+                      ))}
+                      <Button variant="outline" size="sm" onClick={addVariable} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Variable</Button>
+                    </CardContent>
+                  </Card>
+                </div>
+              </ScrollArea>
 
               {/* Right Panel: Scenario Steps */}
-              <div className="md:col-span-2 space-y-4 overflow-y-auto">
-                <div className="flex justify-between items-center">
+              <div className="md:col-span-2 flex flex-col h-full"> {/* Changed to flex flex-col and h-full */}
+                <div className="flex justify-between items-center mb-2 flex-shrink-0">
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
-                   <DropdownMenu>
+                    <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm"><PlusCircle className="mr-2 h-4 w-4" /> Add Step</Button>
                       </DropdownMenuTrigger>
@@ -459,103 +463,107 @@ export default function ScenariosPage() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                 </div>
-                {editingScenario.steps.map((step, index) => {
-                  const StepIcon = stepIcons[step.type];
-                  return (
-                    <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
-                      <Button variant="ghost" size="icon" className="absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100" aria-label="Drag to reorder">
-                        <GripVertical className="h-4 w-4" />
-                      </Button>
-                       <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100">
-                        <X className="h-4 w-4" />
-                      </Button>
-                      <div className="flex items-center gap-2 mb-2">
-                        <StepIcon className="h-5 w-5 text-primary" />
-                        <Input value={step.name} onChange={(e) => handleStepChange(index, 'name', e.target.value)} className="text-md font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto" />
-                      </div>
-
-                      {/* RADIUS Step Details */}
-                      {step.type === 'radius' && (
-                        <div className="space-y-3 pl-7 text-sm">
-                          <div>
-                            <Label>Packet Template:</Label>
-                            <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})}>
-                              <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="pkt1">3GPP Access-Request</SelectItem>
-                                <SelectItem value="pkt2">Cisco VoIP Acc Start</SelectItem>
-                                {/* TODO: Populate from actual packet library */}
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <Label className="font-medium">Expected Reply Attributes:</Label>
-                          {(step.details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => (
-                            <div key={attr.id} className="flex items-end gap-2 p-2 border rounded-md bg-muted/20">
-                              <div className="flex-1">
-                                <Label htmlFor={`exp-attr-name-${attr.id}`} className="text-xs">Attribute Name</Label>
-                                <Input 
-                                  id={`exp-attr-name-${attr.id}`} 
-                                  value={attr.name} 
-                                  onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'name', e.target.value)}
-                                  placeholder="e.g., Framed-IP-Address"
-                                />
-                              </div>
-                              <div className="flex-1">
-                                <Label htmlFor={`exp-attr-value-${attr.id}`} className="text-xs">Expected Value</Label>
-                                <Input 
-                                  id={`exp-attr-value-${attr.id}`} 
-                                  value={attr.value}
-                                  onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'value', e.target.value)}
-                                  placeholder="e.g., 192.168.0.1"
-                                />
-                              </div>
-                              <Button variant="ghost" size="icon" onClick={() => removeExpectedReplyAttribute(index, attr.id)} className="text-destructive hover:text-destructive h-8 w-8">
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ))}
-                          <Button variant="outline" size="sm" onClick={() => addExpectedReplyAttribute(index)}>
-                            <PlusCircle className="mr-2 h-3 w-3" /> Add Expected Attribute
+                <ScrollArea className="flex-grow pr-2"> {/* ScrollArea for steps */}
+                  <div className="space-y-4">
+                    {editingScenario.steps.map((step, index) => {
+                      const StepIcon = stepIcons[step.type];
+                      return (
+                        <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
+                          <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder">
+                            <GripVertical className="h-4 w-4" />
                           </Button>
-                          
-                          <div className="grid grid-cols-2 gap-2 pt-2">
-                            <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })}/></div>
-                            <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })}/></div>
+                          <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100">
+                            <X className="h-4 w-4" />
+                          </Button>
+                          <div className="flex items-center gap-2 mb-2">
+                            <StepIcon className="h-5 w-5 text-primary" />
+                            <Input value={step.name} onChange={(e) => handleStepChange(index, 'name', e.target.value)} className="text-md font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto" />
                           </div>
-                        </div>
-                      )}
 
-                      {/* SQL Step Details */}
-                      {step.type === 'sql' && (
-                        <div className="space-y-2 pl-7 text-sm">
-                          <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} />
-                          <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} />
-                          <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} />
-                        </div>
-                      )}
-                      {step.type === 'delay' && (
-                        <div className="space-y-2 pl-7 text-sm">
-                          <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms || ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} />
-                        </div>
-                      )}
-                       {(step.type === 'loop_start' || step.type === 'conditional_start') && (
-                        <div className="space-y-2 pl-7 text-sm">
-                          {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} /></div>}
-                          <Label>Condition (optional):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
-                        </div>
-                      )}
-                      {(step.type === 'loop_end' || step.type === 'conditional_end') && (
-                        <p className="pl-7 text-sm text-muted-foreground">Marks the end of the block.</p>
-                      )}
-                    </Card>
-                  )
-                })}
-                 {editingScenario.steps.length === 0 && <p className="text-center text-muted-foreground py-6">No steps defined. Click "Add Step" to begin.</p>}
+                          {/* RADIUS Step Details */}
+                          {step.type === 'radius' && (
+                            <div className="space-y-3 pl-7 text-sm">
+                              <div>
+                                <Label>Packet Template:</Label>
+                                <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})}>
+                                  <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="pkt1">3GPP Access-Request</SelectItem>
+                                    <SelectItem value="pkt2">Cisco VoIP Acc Start</SelectItem>
+                                    {/* TODO: Populate from actual packet library */}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <Label className="font-medium">Expected Reply Attributes:</Label>
+                              {(step.details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => (
+                                <div key={attr.id} className="flex items-end gap-2 p-2 border rounded-md bg-muted/20">
+                                  <div className="flex-1">
+                                    <Label htmlFor={`exp-attr-name-${attr.id}`} className="text-xs">Attribute Name</Label>
+                                    <Input 
+                                      id={`exp-attr-name-${attr.id}`} 
+                                      value={attr.name} 
+                                      onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'name', e.target.value)}
+                                      placeholder="e.g., Framed-IP-Address"
+                                    />
+                                  </div>
+                                  <div className="flex-1">
+                                    <Label htmlFor={`exp-attr-value-${attr.id}`} className="text-xs">Expected Value</Label>
+                                    <Input 
+                                      id={`exp-attr-value-${attr.id}`} 
+                                      value={attr.value}
+                                      onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'value', e.target.value)}
+                                      placeholder="e.g., 192.168.0.1"
+                                    />
+                                  </div>
+                                  <Button variant="ghost" size="icon" onClick={() => removeExpectedReplyAttribute(index, attr.id)} className="text-destructive hover:text-destructive h-8 w-8">
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button variant="outline" size="sm" onClick={() => addExpectedReplyAttribute(index)}>
+                                <PlusCircle className="mr-2 h-3 w-3" /> Add Expected Attribute
+                              </Button>
+                              
+                              <div className="grid grid-cols-2 gap-2 pt-2">
+                                <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })}/></div>
+                                <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })}/></div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* SQL Step Details */}
+                          {step.type === 'sql' && (
+                            <div className="space-y-2 pl-7 text-sm">
+                              <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} />
+                              <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} />
+                              <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} />
+                            </div>
+                          )}
+                          {step.type === 'delay' && (
+                            <div className="space-y-2 pl-7 text-sm">
+                              <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms || ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} />
+                            </div>
+                          )}
+                          {(step.type === 'loop_start' || step.type === 'conditional_start') && (
+                            <div className="space-y-2 pl-7 text-sm">
+                              {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} /></div>}
+                              <Label>Condition (optional):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
+                            </div>
+                          )}
+                          {(step.type === 'loop_end' || step.type === 'conditional_end') && (
+                            <p className="pl-7 text-sm text-muted-foreground">Marks the end of the block.</p>
+                          )}
+                        </Card>
+                      )
+                    })}
+                    {editingScenario.steps.length === 0 && <p className="text-center text-muted-foreground py-6">No steps defined. Click "Add Step" to begin.</p>}
+                  </div>
+                </ScrollArea>
               </div>
             </div>
           )}
-          <DialogFooter className="mt-auto pt-4 border-t">
+          <DialogFooter className="mt-auto pt-4 border-t flex-shrink-0">
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
             <Button onClick={handleSaveScenario}><Save className="mr-2 h-4 w-4" /> Save Scenario</Button>
           </DialogFooter>
@@ -564,4 +572,3 @@ export default function ScenariosPage() {
     </div>
   );
 }
-
