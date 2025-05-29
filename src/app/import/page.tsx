@@ -86,7 +86,7 @@ export default function ImportPage() {
     if (format === "JSON") return <FileJson className="h-5 w-5 text-primary" />;
     if (format.includes("Hex")) return <FileCode className="h-5 w-5 text-primary" />;
     return null;
-  }
+  };
 
   return (
     <div className="space-y-8">
