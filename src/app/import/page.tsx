@@ -27,7 +27,7 @@ export default function ImportPage() {
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
-  const handleParsePacketData = () => {
+  function handleParsePacketData() {
     if (!packetData.trim()) {
       toast({ title: "Input Empty", description: "Please paste packet data to import.", variant: "destructive" });
       return;
@@ -79,14 +79,14 @@ export default function ImportPage() {
       setIsLoading(false);
       toast({ title: "Parsing Complete", description: `Detected format: ${formatDetected}. Check results below.`});
     }, 1000);
-  };
+  }
 
-  const getFormatIcon = (format: string) => {
+  function getFormatIcon(format: string) {
     if (format === "FreeRADIUS-style") return <FileTerminal className="h-5 w-5 text-primary" />;
     if (format === "JSON") return <FileJson className="h-5 w-5 text-primary" />;
     if (format.includes("Hex")) return <FileCode className="h-5 w-5 text-primary" />;
     return null;
-  };
+  }
 
   return (
     <div className="space-y-8">
