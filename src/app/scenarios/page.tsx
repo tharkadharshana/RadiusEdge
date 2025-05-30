@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { useToast } from '@/hooks/use-toast';
+import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
 
 
@@ -110,6 +110,22 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   log_message: MessageSquareText,
 };
 
+// Debounce function
+function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  const debounced = (...args: Parameters<F>) => {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+    timeout = setTimeout(() => func(...args), waitFor);
+  };
+
+  return debounced as (...args: Parameters<F>) => ReturnType<F>;
+}
+
+
 export default function ScenariosPage() {
   const searchParams = useSearchParams();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -122,46 +138,60 @@ export default function ScenariosPage() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchScenarios = async () => {
+  const fetchScenarios = useCallback(async (currentSearchTerm: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/scenarios');
+      const queryParams = new URLSearchParams();
+      if (currentSearchTerm) {
+        queryParams.append('search', currentSearchTerm);
+      }
+      // queryParams.append('sortBy', 'lastModified'); // Example: could add a sort state
+
+      const response = await fetch(`/api/scenarios?${queryParams.toString()}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch scenarios');
+        const errorData = await response.json().catch(() => ({ message: 'Failed to fetch scenarios' }));
+        throw new Error(errorData.message);
       }
       const data = await response.json();
       setScenarios(data);
     } catch (error) {
       console.error("Error fetching scenarios:", error);
-      toast({ title: "Error", description: "Could not fetch scenarios.", variant: "destructive" });
+      toast({ title: "Error", description: (error as Error).message || "Could not fetch scenarios.", variant: "destructive" });
+      setScenarios([]); // Clear scenarios on error
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast]); // Removed setIsLoading from dependencies as it's stable
+
+
+  // Debounced version of fetchScenarios
+  const debouncedFetchScenarios = useCallback(debounce(fetchScenarios, 500), [fetchScenarios]);
 
   useEffect(() => {
-    fetchScenarios();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    debouncedFetchScenarios(searchTerm);
+  }, [searchTerm, debouncedFetchScenarios]);
 
 
   useEffect(() => {
     const templateId = searchParams.get('template');
-    if (templateId && !isLoading) { // Ensure scenarios are loaded or not relevant to template
-      const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' :
+    const openScenarioId = searchParams.get('open');
+
+    if (openScenarioId && scenarios.length > 0) {
+        const scenarioToOpen = scenarios.find(s => s.id === openScenarioId);
+        if (scenarioToOpen) {
+            handleEditScenario(scenarioToOpen);
+        }
+    } else if (templateId && scenarios.length === 0 && !isLoading) { 
+        // scenarios.length === 0 check might be problematic if fetch is ongoing
+        // Consider if template logic should wait for initial fetch
+        const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' :
                            templateId === 'wifi-eap' ? 'Wi-Fi EAP-TTLS (from template)' :
                            'New Scenario (from template)';
       createNewScenario(templateName);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, isLoading]);
+  }, [searchParams, scenarios, isLoading]); // Added scenarios and isLoading to deps
 
-
-  const filteredScenarios = scenarios.filter(scenario =>
-    scenario.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    scenario.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (Array.isArray(scenario.tags) && scenario.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
-  );
 
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
@@ -179,7 +209,8 @@ export default function ScenariosPage() {
       const response = await fetch(url, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingScenario),
+        // Ensure lastModified is updated before saving
+        body: JSON.stringify({ ...editingScenario, lastModified: new Date().toISOString() }),
       });
 
       if (!response.ok) {
@@ -188,11 +219,7 @@ export default function ScenariosPage() {
       }
       const savedScenario = await response.json();
 
-      if (isNew) {
-        setScenarios(prev => [...prev, savedScenario]);
-      } else {
-        setScenarios(prev => prev.map(s => s.id === savedScenario.id ? savedScenario : s));
-      }
+      fetchScenarios(searchTerm); // Refetch to get the latest list including the saved one
       handleEditScenario(null);
       toast({ title: "Scenario Saved", description: `Scenario "${savedScenario.name}" has been saved.` });
     } catch (error: any) {
@@ -204,24 +231,23 @@ export default function ScenariosPage() {
   };
 
   const handleDeleteScenario = async (scenarioId: string) => {
-    // Basic confirmation, can be replaced with a confirmation dialog
     if (!window.confirm("Are you sure you want to delete this scenario?")) {
       return;
     }
-    setIsLoading(true); // Or a specific deleting state
+    setIsSaving(true); // Use isSaving to disable actions during delete
     try {
       const response = await fetch(`/api/scenarios/${scenarioId}`, { method: 'DELETE' });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.message || 'Failed to delete scenario');
       }
-      setScenarios(prev => prev.filter(s => s.id !== scenarioId));
+      fetchScenarios(searchTerm); // Refetch scenarios after deletion
       toast({ title: "Scenario Deleted", description: "Scenario successfully deleted." });
     } catch (error: any) {
       console.error("Error deleting scenario:", error);
       toast({ title: "Delete Failed", description: error.message || "Could not delete scenario.", variant: "destructive" });
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
@@ -232,7 +258,7 @@ export default function ScenariosPage() {
       description: '',
       variables: [],
       steps: [{ id: `step_new_1_${Date.now()}`, type: 'radius', name: 'Initial RADIUS Request', details: { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 } }],
-      lastModified: new Date().toISOString().split('T')[0], // Placeholder, backend will set actual
+      lastModified: new Date().toISOString(),
       tags: [],
     });
   };
@@ -513,14 +539,14 @@ export default function ScenariosPage() {
     <div className="space-y-8">
       <PageHeader
         title="Scenario Builder"
-        description="Design complex RADIUS test scenarios. Conditional logic and API calls are visual only. Step reordering (drag & drop) is not yet implemented."
+        description="Design complex RADIUS test scenarios. Conditional logic and API calls are visual representations only. Step reordering (drag & drop) is not yet implemented."
         actions={
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept=".json" />
-            <Button variant="outline" onClick={handleImportClick} disabled={isLoading}>
+            <Button variant="outline" onClick={handleImportClick} disabled={isLoading || isSaving}>
               <Upload className="mr-2 h-4 w-4" /> Import Scenario
             </Button>
-            <Button onClick={() => createNewScenario()} disabled={isLoading}>
+            <Button onClick={() => createNewScenario()} disabled={isLoading || isSaving}>
               <PlusCircle className="mr-2 h-4 w-4" /> Create New Scenario
             </Button>
           </div>
@@ -542,7 +568,7 @@ export default function ScenariosPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading && scenarios.length === 0 ? ( // Show loading only if scenarios are truly empty initially
             <div className="flex justify-center items-center h-40">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="ml-2 text-muted-foreground">Loading scenarios...</p>
@@ -560,37 +586,37 @@ export default function ScenariosPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredScenarios.map((scenario) => (
+              {scenarios.map((scenario) => (
                 <TableRow key={scenario.id}>
                   <TableCell className="font-medium">{scenario.name}</TableCell>
                   <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{scenario.description}</TableCell>
                   <TableCell>{scenario.steps.length}</TableCell>
                    <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {scenario.tags.map(tag => <Badge key={tag} variant="secondary">{tag}</Badge>)}
+                      {(scenario.tags || []).map(tag => <Badge key={tag} variant="secondary">{tag}</Badge>)}
                     </div>
                   </TableCell>
                   <TableCell>{new Date(scenario.lastModified).toLocaleDateString()}</TableCell>
                   <TableCell className="text-right">
                      <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0">
+                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={isSaving}>
                           <span className="sr-only">Open menu</span>
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEditScenario(scenario)}>
+                        <DropdownMenuItem onClick={() => handleEditScenario(scenario)} disabled={isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem disabled> {/* Conceptual */}
                           <Play className="mr-2 h-4 w-4" /> Run
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem disabled> {/* Conceptual */}
                           <Copy className="mr-2 h-4 w-4" /> Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleDeleteScenario(scenario.id)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
+                        <DropdownMenuItem onClick={() => handleDeleteScenario(scenario.id)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -598,7 +624,7 @@ export default function ScenariosPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filteredScenarios.length === 0 && !isLoading && (
+              {!isLoading && scenarios.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     No scenarios found. Try adjusting your search or create a new scenario.
@@ -611,7 +637,7 @@ export default function ScenariosPage() {
         </CardContent>
          <CardFooter>
             <p className="text-sm text-muted-foreground">
-              {isLoading ? "Loading..." : `Showing ${filteredScenarios.length} of ${scenarios.length} scenarios.`}
+              {isLoading && scenarios.length === 0 ? "Loading..." : `Showing ${scenarios.length} scenarios.`}
             </p>
          </CardFooter>
       </Card>
@@ -635,15 +661,15 @@ export default function ScenariosPage() {
                       <CardContent className="space-y-3">
                         <div>
                           <Label htmlFor="scenario-name">Scenario Name</Label>
-                          <Input id="scenario-name" value={editingScenario.name} onChange={(e) => setEditingScenario({ ...editingScenario, name: e.target.value })} />
+                          <Input id="scenario-name" value={editingScenario.name} onChange={(e) => setEditingScenario({ ...editingScenario, name: e.target.value })} disabled={isSaving} />
                         </div>
                         <div>
                           <Label htmlFor="scenario-description">Description</Label>
-                          <Textarea id="scenario-description" value={editingScenario.description} onChange={(e) => setEditingScenario({ ...editingScenario, description: e.target.value })} />
+                          <Textarea id="scenario-description" value={editingScenario.description} onChange={(e) => setEditingScenario({ ...editingScenario, description: e.target.value })} disabled={isSaving} />
                         </div>
                         <div>
                           <Label htmlFor="scenario-tags">Tags (comma-separated)</Label>
-                          <Input id="scenario-tags" value={editingScenario.tags.join(', ')} onChange={(e) => setEditingScenario({ ...editingScenario, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })} placeholder="e.g., Auth, 3GPP" />
+                          <Input id="scenario-tags" value={(editingScenario.tags || []).join(', ')} onChange={(e) => setEditingScenario({ ...editingScenario, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })} placeholder="e.g., Auth, 3GPP" disabled={isSaving}/>
                         </div>
                       </CardContent>
                     </Card>
@@ -654,13 +680,13 @@ export default function ScenariosPage() {
                           <Card key={variable.id} className="p-3 bg-card">
                             <div className="flex justify-between items-center mb-1">
                               <Label htmlFor={`var-name-${index}`} className="text-xs font-semibold">Variable {index + 1}</Label>
-                              <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive">
+                              <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive" disabled={isSaving}>
                                   <X className="h-3 w-3" />
                               </Button>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
-                              <Input placeholder="Name" value={variable.name} onChange={(e) => handleVariableChange(index, 'name', e.target.value)} />
-                              <Select value={variable.type} onValueChange={(val) => handleVariableChange(index, 'type', val)}>
+                              <Input placeholder="Name" value={variable.name} onChange={(e) => handleVariableChange(index, 'name', e.target.value)} disabled={isSaving}/>
+                              <Select value={variable.type} onValueChange={(val) => handleVariableChange(index, 'type', val)} disabled={isSaving}>
                                 <SelectTrigger><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="static">Static</SelectItem>
@@ -670,10 +696,10 @@ export default function ScenariosPage() {
                                 </SelectContent>
                               </Select>
                             </div>
-                            <Input className="mt-1" placeholder="Value / Pattern / List (CSV)" value={variable.value} onChange={(e) => handleVariableChange(index, 'value', e.target.value)} />
+                            <Input className="mt-1" placeholder="Value / Pattern / List (CSV)" value={variable.value} onChange={(e) => handleVariableChange(index, 'value', e.target.value)} disabled={isSaving}/>
                           </Card>
                         ))}
-                        <Button variant="outline" size="sm" onClick={addVariable} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Variable</Button>
+                        <Button variant="outline" size="sm" onClick={addVariable} className="w-full" disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add Variable</Button>
                       </CardContent>
                     </Card>
                   </div>
@@ -686,7 +712,7 @@ export default function ScenariosPage() {
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm"><PlusCircle className="mr-2 h-4 w-4" /> Add Step</Button>
+                        <Button variant="outline" size="sm" disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add Step</Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent>
                         <DropdownMenuItem onClick={() => addStep('radius')}><FileText className="mr-2 h-4 w-4" /> RADIUS Packet</DropdownMenuItem>
@@ -708,22 +734,22 @@ export default function ScenariosPage() {
                       const StepIcon = stepIcons[step.type];
                       return (
                         <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
-                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented - visual cue only)">
+                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented - visual cue only)" disabled={isSaving}>
                             <GripVertical className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100">
+                          <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100" disabled={isSaving}>
                             <X className="h-4 w-4" />
                           </Button>
                           <div className="flex items-center gap-2 mb-2">
                             <StepIcon className="h-5 w-5 text-primary" />
-                            <Input value={step.name} onChange={(e) => handleStepChange(index, 'name', e.target.value)} className="text-md font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto" />
+                            <Input value={step.name} onChange={(e) => handleStepChange(index, 'name', e.target.value)} className="text-md font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto" disabled={isSaving} />
                           </div>
 
                           {step.type === 'radius' && (
                             <div className="space-y-3 pl-7 text-sm">
                               <div>
                                 <Label>Packet Template:</Label>
-                                <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})}>
+                                <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})} disabled={isSaving}>
                                   <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="pkt1">3GPP Access-Request</SelectItem>
@@ -740,12 +766,13 @@ export default function ScenariosPage() {
                                   placeholder={'User-Name = "testuser"\nFramed-IP-Address = 10.0.0.1\nAcct-Status-Type = Start'}
                                   rows={3}
                                   className="font-mono text-xs"
+                                  disabled={isSaving || isParsingAttributes}
                                 />
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => handleParsePastedAttributes(index)}
-                                  disabled={isParsingAttributes}
+                                  disabled={isSaving || isParsingAttributes}
                                   className="w-full"
                                 >
                                   {isParsingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
@@ -762,6 +789,7 @@ export default function ScenariosPage() {
                                       value={attr.name}
                                       onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'name', e.target.value)}
                                       placeholder="e.g., Framed-IP-Address"
+                                      disabled={isSaving}
                                     />
                                   </div>
                                   <div className="flex-1">
@@ -771,40 +799,41 @@ export default function ScenariosPage() {
                                       value={attr.value}
                                       onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'value', e.target.value)}
                                       placeholder="e.g., 192.168.0.1"
+                                      disabled={isSaving}
                                     />
                                   </div>
-                                  <Button variant="ghost" size="icon" onClick={() => removeExpectedReplyAttribute(index, attr.id)} className="text-destructive hover:text-destructive h-8 w-8">
+                                  <Button variant="ghost" size="icon" onClick={() => removeExpectedReplyAttribute(index, attr.id)} className="text-destructive hover:text-destructive h-8 w-8" disabled={isSaving}>
                                     <X className="h-4 w-4" />
                                   </Button>
                                 </div>
                               ))}
-                              <Button variant="outline" size="sm" onClick={() => addExpectedReplyAttribute(index)}>
+                              <Button variant="outline" size="sm" onClick={() => addExpectedReplyAttribute(index)} disabled={isSaving}>
                                 <PlusCircle className="mr-2 h-3 w-3" /> Add Expected Attribute Manually
                               </Button>
 
                               <div className="grid grid-cols-2 gap-2 pt-2">
-                                <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })}/></div>
-                                <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })}/></div>
+                                <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })} disabled={isSaving}/></div>
+                                <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })} disabled={isSaving}/></div>
                               </div>
                             </div>
                           )}
 
                           {step.type === 'sql' && (
                             <div className="space-y-2 pl-7 text-sm">
-                              <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} />
-                              <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} />
-                              <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} />
+                              <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} disabled={isSaving}/>
+                              <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} disabled={isSaving}/>
+                              <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} disabled={isSaving}/>
                             </div>
                           )}
                           {step.type === 'delay' && (
                             <div className="space-y-2 pl-7 text-sm">
-                              <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms || ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} />
+                              <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms || ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} disabled={isSaving}/>
                             </div>
                           )}
                           {(step.type === 'loop_start' || step.type === 'conditional_start') && (
                             <div className="space-y-2 pl-7 text-sm">
-                              {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} /></div>}
-                              <Label>Condition:</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
+                              {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} disabled={isSaving}/></div>}
+                              <Label>Condition:</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})} disabled={isSaving}/>
                               {step.type === 'conditional_start' && <p className="text-xs text-muted-foreground">Note: Conditional execution is visual only.</p>}
                             </div>
                           )}
@@ -814,10 +843,10 @@ export default function ScenariosPage() {
 
                           {step.type === 'api_call' && (
                             <div className="space-y-3 pl-7 text-sm">
-                              <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })}/></div>
+                              <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })} disabled={isSaving}/></div>
                               <div>
                                 <Label>Method:</Label>
-                                <Select value={step.details.method || 'GET'} onValueChange={(v) => handleStepChange(index, 'details', {method: v as 'GET' | 'POST'})}>
+                                <Select value={step.details.method || 'GET'} onValueChange={(v) => handleStepChange(index, 'details', {method: v as 'GET' | 'POST'})} disabled={isSaving}>
                                   <SelectTrigger><SelectValue /></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="GET">GET</SelectItem>
@@ -831,21 +860,21 @@ export default function ScenariosPage() {
                                     <div key={header.id} className="flex items-end gap-2 mt-1 p-2 border rounded-md bg-muted/20">
                                     <div className="flex-1">
                                         <Label htmlFor={`header-name-${header.id}`} className="text-xs">Header Name</Label>
-                                        <Input id={`header-name-${header.id}`} value={header.name} onChange={(e) => handleApiHeaderChange(index, header.id, 'name', e.target.value)} placeholder="e.g., Content-Type"/>
+                                        <Input id={`header-name-${header.id}`} value={header.name} onChange={(e) => handleApiHeaderChange(index, header.id, 'name', e.target.value)} placeholder="e.g., Content-Type" disabled={isSaving}/>
                                     </div>
                                     <div className="flex-1">
                                         <Label htmlFor={`header-value-${header.id}`} className="text-xs">Header Value</Label>
-                                        <Input id={`header-value-${header.id}`} value={header.value} onChange={(e) => handleApiHeaderChange(index, header.id, 'value', e.target.value)} placeholder="e.g., application/json"/>
+                                        <Input id={`header-value-${header.id}`} value={header.value} onChange={(e) => handleApiHeaderChange(index, header.id, 'value', e.target.value)} placeholder="e.g., application/json" disabled={isSaving}/>
                                     </div>
-                                    <Button variant="ghost" size="icon" onClick={() => removeApiHeader(index, header.id)} className="text-destructive hover:text-destructive h-8 w-8"><X className="h-4 w-4" /></Button>
+                                    <Button variant="ghost" size="icon" onClick={() => removeApiHeader(index, header.id)} className="text-destructive hover:text-destructive h-8 w-8" disabled={isSaving}><X className="h-4 w-4" /></Button>
                                     </div>
                                 ))}
-                                <Button variant="outline" size="sm" onClick={() => addApiHeader(index)} className="mt-2"><PlusCircle className="mr-2 h-3 w-3" /> Add Header</Button>
+                                <Button variant="outline" size="sm" onClick={() => addApiHeader(index)} className="mt-2" disabled={isSaving}><PlusCircle className="mr-2 h-3 w-3" /> Add Header</Button>
                                </div>
                               {step.details.method === 'POST' && (
-                                <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={step.details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3}/></div>
+                                <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={step.details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3} disabled={isSaving}/></div>
                               )}
-                              <div><Label>Mock Response Body (JSON for execution):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3}/></div>
+                              <div><Label>Mock Response Body (JSON for execution):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3} disabled={isSaving}/></div>
                               <p className="text-xs text-muted-foreground">Note: API calls are for interaction with external systems.</p>
                             </div>
                           )}
@@ -853,7 +882,7 @@ export default function ScenariosPage() {
                           {step.type === 'log_message' && (
                             <div className="space-y-2 pl-7 text-sm">
                                 <Label>Message to Log:</Label>
-                                <Textarea placeholder="Enter message. You can use ${variable_name}." value={step.details.message || ''} onChange={(e) => handleStepChange(index, 'details', {message: e.target.value})} rows={2}/>
+                                <Textarea placeholder="Enter message. You can use ${variable_name}." value={step.details.message || ''} onChange={(e) => handleStepChange(index, 'details', {message: e.target.value})} rows={2} disabled={isSaving}/>
                             </div>
                           )}
 

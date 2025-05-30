@@ -10,22 +10,31 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit') as string, 10) : undefined;
   const sortBy = searchParams.get('sortBy'); // e.g., 'lastModified'
+  const search = searchParams.get('search'); // New search parameter
 
   try {
     const db = await getDb();
     let query = 'SELECT * FROM scenarios';
+    const queryParams: any[] = [];
+
+    if (search) {
+      query += ' WHERE (name LIKE ? OR description LIKE ?)';
+      queryParams.push(`%${search}%`, `%${search}%`);
+    }
     
     if (sortBy === 'lastModified') {
       query += ' ORDER BY lastModified DESC';
     } else {
-      query += ' ORDER BY name ASC'; // Default sort
+      query += (search ? ' AND' : ' WHERE') + ' 1=1 ORDER BY name ASC'; // Ensure ORDER BY is always valid
+      if (search) query += ' ORDER BY name ASC'; else query += ' ORDER BY name ASC';
     }
 
     if (limit) {
-      query += ` LIMIT ${limit}`;
+      query += ` LIMIT ?`;
+      queryParams.push(limit);
     }
 
-    const scenariosFromDb = await db.all(query);
+    const scenariosFromDb = await db.all(query, ...queryParams);
     
     const scenarios: Scenario[] = scenariosFromDb.map(s => ({
       ...s,
