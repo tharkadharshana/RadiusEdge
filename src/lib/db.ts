@@ -42,9 +42,21 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Scenarios table checked/created.');
 
+  // Packets Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS packets (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      attributes TEXT,   -- Store as JSON string of {id, name, value} array
+      lastModified TEXT, -- Store as ISO8601 string
+      tags TEXT          -- Store as JSON string (array of strings)
+    );
+  `);
+  console.log('Packets table checked/created.');
+
   // You can add more table creations here as we build out the backend
   // For example:
-  // CREATE TABLE IF NOT EXISTS packets (...)
   // CREATE TABLE IF NOT EXISTS server_configs (...)
   // CREATE TABLE IF NOT EXISTS db_configs (...)
   // CREATE TABLE IF NOT EXISTS users (...)
