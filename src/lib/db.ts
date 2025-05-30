@@ -55,9 +55,31 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Packets table checked/created.');
 
+  // Server Configurations Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS server_configs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT,
+      host TEXT,
+      sshPort INTEGER,
+      sshUser TEXT,
+      authMethod TEXT,
+      privateKey TEXT,
+      password TEXT,
+      radiusAuthPort INTEGER,
+      radiusAcctPort INTEGER,
+      defaultSecret TEXT,
+      nasSpecificSecrets TEXT,      -- Store as JSON string (object)
+      status TEXT,
+      testSteps TEXT,               -- Store as JSON string (array of TestStepConfig)
+      scenarioExecutionSshCommands TEXT -- Store as JSON string (array of SshExecutionStep)
+    );
+  `);
+  console.log('Server Configurations table checked/created.');
+
   // You can add more table creations here as we build out the backend
   // For example:
-  // CREATE TABLE IF NOT EXISTS server_configs (...)
   // CREATE TABLE IF NOT EXISTS db_configs (...)
   // CREATE TABLE IF NOT EXISTS users (...)
   // CREATE TABLE IF NOT EXISTS execution_results (...)
