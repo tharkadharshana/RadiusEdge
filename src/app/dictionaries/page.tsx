@@ -17,7 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
   DialogClose,
-  DialogTrigger, // Added DialogTrigger
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -37,7 +37,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger as DropdownMenuTriggerComponent, // Renamed to avoid conflict if DialogTrigger was also aliased
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -55,7 +55,7 @@ export interface Attribute {
   vendor?: string;
   description?: string;
   options?: string[];
-  enumValues?: (AiParsedEnum)[]; // Ensured this uses AiParsedEnum
+  enumValues?: (AiParsedEnum)[];
   examples?: string;
 }
 
@@ -86,8 +86,8 @@ export default function DictionariesPage() {
   const [currentAttributeToEdit, setCurrentAttributeToEdit] = useState<Partial<Attribute> & { isNew?: boolean } | null>(null);
   const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // General saving state for enable/disable, delete
-  const [isSavingAttributes, setIsSavingAttributes] = useState(false); // Specific for saving attributes in dialog
+  const [isSaving, setIsSaving] = useState(false); 
+  const [isSavingAttributes, setIsSavingAttributes] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [importMode, setImportMode] = useState<'manual' | 'paste' | 'upload'>('manual');
   const [newDictName, setNewDictName] = useState('');
@@ -153,7 +153,7 @@ export default function DictionariesPage() {
 
   const handleImportDictionary = async () => {
     setIsSaving(true);
-    let requestBody: any = { files: [] }; // Initialize files as an array for the backend
+    let requestBody: any = { files: [] };
     let toastTitle = "Import Started";
     let toastDescription = "Processing your dictionary import...";
 
@@ -170,10 +170,10 @@ export default function DictionariesPage() {
           } catch (readError) {
             console.error(`FRONTEND: Error reading file ${file.name}:`, readError);
             toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
-            return { name: file.name, content: '' }; // Still send metadata even if content read fails
+            return { name: file.name, content: '' }; 
           }
         }));
-        requestBody.files = filesToProcess; // This now sends content
+        requestBody.files = filesToProcess; 
         toastTitle = filesToProcess.length > 1 ? "Bulk Import Started" : "File Import Started";
         toastDescription = `Importing ${filesToProcess.length} file(s)... AI parsing content for each.`;
 
@@ -186,7 +186,7 @@ export default function DictionariesPage() {
         if (newDictName) requestBody.name = newDictName;
         if (newDictSource) requestBody.source = newDictSource;
         toastDescription = "Parsing pasted content...";
-      } else { // manual
+      } else { 
         if (!newDictName) {
           toast({ title: "Missing Name", description: "Please provide a name for the dictionary.", variant: "destructive" });
           setIsSaving(false); return;
@@ -260,7 +260,6 @@ export default function DictionariesPage() {
   };
 
   const requestSingleDelete = (id: string, name: string) => {
-    console.log(`FRONTEND: Staging single delete for ID: ${id}, Name: ${name}`);
     setPendingDeleteInfo({ type: 'single', id, name });
     setShowDeleteConfirmDialog(true);
   };
@@ -270,7 +269,6 @@ export default function DictionariesPage() {
       toast({ title: "No Dictionaries Selected", description: "Please select dictionaries to delete.", variant: "default" });
       return;
     }
-    console.log("FRONTEND: Staging bulk delete for IDs:", selectedDictionaryIds);
     setPendingDeleteInfo({ type: 'bulk', ids: [...selectedDictionaryIds] });
     setShowDeleteConfirmDialog(true);
   };
@@ -285,7 +283,7 @@ export default function DictionariesPage() {
 
     if (currentPendingDelete.type === 'single' && currentPendingDelete.id && currentPendingDelete.name) {
       const { id, name } = currentPendingDelete;
-      console.log(`FRONTEND: Executing single delete for ID: ${id}, Name: ${name}`);
+      console.log(`FRONTEND: Attempting to delete dictionary ID: ${id}, Name: ${name}`);
       try {
         const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
         console.log(`FRONTEND: Single delete API response status for ID ${id}: ${response.status}`);
@@ -397,7 +395,7 @@ export default function DictionariesPage() {
     if (!currentAttributeToEdit) return;
     setEditingExampleAttributes(prev => {
       const newAttributes = [...prev];
-      const newOrUpdatedAttribute = { ...currentAttributeToEdit, id: currentAttributeToEdit.id || uuidv4() } as Attribute; // Ensure ID
+      const newOrUpdatedAttribute = { ...currentAttributeToEdit, id: currentAttributeToEdit.id || uuidv4() } as Attribute;
 
       if (attributeEditIndex !== null && !currentAttributeToEdit.isNew && attributeEditIndex < newAttributes.length) {
         newAttributes[attributeEditIndex] = newOrUpdatedAttribute;
@@ -543,13 +541,13 @@ export default function DictionariesPage() {
         actions={
           <div className="flex gap-2">
             {selectedDictionaryIds.length > 0 && (
-              <DropdownMenuComponent>
-                <DropdownMenuTriggerComponent asChild>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <Button variant="outline" disabled={isSaving}>
                     <ChevronsUpDown className="mr-2 h-4 w-4" />
                     Bulk Actions ({selectedDictionaryIds.length})
                   </Button>
-                </DropdownMenuTriggerComponent>
+                </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => handleBulkEnableDisable(true)} disabled={isSaving}>
                     <CheckSquare className="mr-2 h-4 w-4" /> Enable Selected
@@ -562,7 +560,7 @@ export default function DictionariesPage() {
                     <Trash2 className="mr-2 h-4 w-4" /> Delete Selected
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenuComponent>
+              </DropdownMenu>
             )}
             <Dialog open={isImportDialogOpen} onOpenChange={(open) => { if (!open) resetImportDialog(); else setIsImportDialogOpen(true); }}>
               <DialogTrigger asChild>
@@ -678,12 +676,12 @@ export default function DictionariesPage() {
                     />
                   </TableCell>
                   <TableCell className="text-right space-x-2">
-                    <DropdownMenuComponent>
-                      <DropdownMenuTriggerComponent asChild>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                         <Button variant="ghost" className="h-8 w-8 p-0" disabled={isSaving}>
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
-                      </DropdownMenuTriggerComponent>
+                      </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                          <DropdownMenuItem onClick={() => handleViewDictionary(dict)} disabled={isSaving}>
                            <Eye className="mr-2 h-4 w-4" /> View/Manage Attributes
@@ -693,7 +691,7 @@ export default function DictionariesPage() {
                            <Trash2 className="mr-2 h-4 w-4" /> Delete
                          </DropdownMenuItem>
                       </DropdownMenuContent>
-                    </DropdownMenuComponent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
