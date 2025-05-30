@@ -3,10 +3,11 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // Import useRouter
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FilePenLine, Bot, BarChart3, Settings, PlusCircle, PlayCircle, Server, Loader2, Rocket, Activity, CheckCircle, AlertTriangle, Waypoints, Wand2, ListChecks, FilePlus2 } from 'lucide-react';
+import { FilePenLine, Bot, BarChart3, Settings, PlusCircle, PlayCircle, Server, Loader2, Rocket, Activity, CheckCircle, AlertTriangle, Waypoints, Wand2, ListChecks, FilePlus2, XCircle } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Scenario } from '@/app/scenarios/page';
@@ -33,12 +34,17 @@ interface ActivityItem {
 }
 
 export default function DashboardPage() {
+  const router = useRouter(); // Initialize router
   const [scenarios, setScenarios] = useState<Pick<Scenario, 'id' | 'name'>[]>([]);
   const [servers, setServers] = useState<Pick<ServerConfig, 'id' | 'name'>[]>([]);
   const [isLoadingScenarios, setIsLoadingScenarios] = useState(true);
   const [isLoadingServers, setIsLoadingServers] = useState(true);
   const [recentActivities, setRecentActivities] = useState<ActivityItem[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
+
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
+  const [selectedServerName, setSelectedServerName] = useState<string | null>(null);
+
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -47,7 +53,7 @@ export default function DashboardPage() {
       setIsLoadingActivities(true);
 
       try {
-        const scenariosRes = await fetch('/api/scenarios?limit=3'); // Assuming API supports limit
+        const scenariosRes = await fetch('/api/scenarios?limit=3'); 
         if (scenariosRes.ok) {
           const scenariosData: Scenario[] = await scenariosRes.json();
           setScenarios(scenariosData.map((s: Scenario) => ({ id: s.id, name: s.name })).slice(0, 3));
@@ -77,9 +83,7 @@ export default function DashboardPage() {
       // Fetch Recent Activities
       try {
         const activities: ActivityItem[] = [];
-
-        // Fetch latest Test Results
-        const resultsRes = await fetch('/api/results?limit=2'); // Assuming API supports limit
+        const resultsRes = await fetch('/api/results?limit=2');
         if (resultsRes.ok) {
           const resultsData: TestResult[] = await resultsRes.json();
           resultsData.slice(0, 2).forEach(r => {
@@ -90,23 +94,22 @@ export default function DashboardPage() {
               timestamp: new Date(r.timestamp),
               icon: r.status === 'Pass' ? CheckCircle : r.status === 'Fail' ? XCircle : AlertTriangle,
               status: r.status,
-              href: `/results?resultId=${r.id}` // Conceptual link
+              href: `/results#result-${r.id}` 
             });
           });
         }
 
-        // Fetch latest AI Interactions
-        const aiInteractionsRes = await fetch('/api/ai-interactions?limit=2'); // Assuming API supports limit
+        const aiInteractionsRes = await fetch('/api/ai-interactions?limit=2');
         if (aiInteractionsRes.ok) {
           const aiData: AiInteraction[] = await aiInteractionsRes.json();
           aiData.slice(0, 2).forEach(ai => {
             let interactionText = "AI interaction logged.";
             try {
-                const userInput = JSON.parse(ai.userInput as string); // Cast to string
+                const userInput = JSON.parse(ai.userInput as string);
                 if (ai.interactionType === 'generate_packet') {
-                    interactionText = `AI generated packet: ${userInput.packetType} for ${userInput.vendor}.`;
+                    interactionText = `AI generated packet: ${userInput.packetType || 'N/A'} for ${userInput.vendor || 'N/A'}.`;
                 } else if (ai.interactionType === 'explain_attribute') {
-                    interactionText = `AI explained attribute: ${userInput.attributeName}.`;
+                    interactionText = `AI explained attribute: ${userInput.attributeName || 'N/A'}.`;
                 }
             } catch (e) { /* ignore parsing error, use default text */ }
             
@@ -117,13 +120,12 @@ export default function DashboardPage() {
               timestamp: new Date(ai.timestamp),
               icon: Wand2,
               status: 'Info',
-              href: `/ai-assistant#interaction-${ai.id}` // Conceptual link
+              href: `/ai-assistant#interaction-${ai.id}` 
             });
           });
         }
         
-        // Fetch latest Scenario modification
-        const scenariosActivityRes = await fetch('/api/scenarios?limit=1&sortBy=lastModified'); // Assuming API supports limit and sort
+        const scenariosActivityRes = await fetch('/api/scenarios?limit=1&sortBy=lastModified'); 
         if (scenariosActivityRes.ok) {
             const scenariosData: Scenario[] = await scenariosActivityRes.json();
             if (scenariosData.length > 0) {
@@ -135,14 +137,13 @@ export default function DashboardPage() {
                     timestamp: new Date(s.lastModified),
                     icon: FilePlus2,
                     status: 'Info',
-                    href: `/scenarios?scenarioId=${s.id}` // Conceptual link
+                    href: `/scenarios#scenario-${s.id}` 
                 });
             }
         }
 
-
         activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-        setRecentActivities(activities.slice(0, 4)); // Show top 4 combined activities
+        setRecentActivities(activities.slice(0, 4)); 
 
       } catch (error) {
         console.error("Error fetching recent activities:", error);
@@ -152,6 +153,25 @@ export default function DashboardPage() {
     };
     fetchDashboardData();
   }, []);
+
+  const handleServerSelect = (serverId: string) => {
+    const server = servers.find(s => s.id === serverId);
+    if (server) {
+      setSelectedServerId(server.id);
+      setSelectedServerName(server.name);
+    } else {
+      setSelectedServerId(null);
+      setSelectedServerName(null);
+    }
+  };
+
+  const handleRunSmokeTest = () => {
+    if (selectedServerId && selectedServerName) {
+      const scenarioName = "SMOKE_TEST_SCENARIO"; // Predefined scenario name
+      router.push(`/execute?scenario=${encodeURIComponent(scenarioName)}&serverId=${selectedServerId}&serverName=${encodeURIComponent(selectedServerName)}`);
+    }
+  };
+
 
   return (
     <div className="space-y-8">
@@ -195,7 +215,7 @@ export default function DashboardPage() {
                 scenarios.map(scenario => (
                 <Button key={scenario.id} variant="outline" className="w-full justify-start gap-2" asChild>
                     <Link href={`/scenarios?open=${scenario.id}`}> 
-                    <PlusCircle className="h-4 w-4" />
+                    <ListChecks className="h-4 w-4" />
                     {scenario.name}
                     </Link>
                 </Button>
@@ -219,7 +239,7 @@ export default function DashboardPage() {
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                  </div>
               ) : (
-                <Select>
+                <Select onValueChange={handleServerSelect} value={selectedServerId || ""}>
                     <SelectTrigger id="server-select">
                     <SelectValue placeholder="Choose a server..." />
                     </SelectTrigger>
@@ -233,8 +253,12 @@ export default function DashboardPage() {
                 </Select>
               )}
             </div>
-            <Button className="w-full bg-accent hover:bg-accent/90 text-accent-foreground" disabled={isLoadingServers || servers.length === 0}>
-              <PlayCircle className="mr-2 h-4 w-4" /> Run Smoke Test (Conceptual)
+            <Button 
+              className="w-full bg-accent hover:bg-accent/90 text-accent-foreground" 
+              disabled={isLoadingServers || servers.length === 0 || !selectedServerId}
+              onClick={handleRunSmokeTest}
+            >
+              <PlayCircle className="mr-2 h-4 w-4" /> Run Smoke Test
             </Button>
              <Button variant="link" className="w-full" asChild>
               <Link href="/execute">Open Execution Console</Link>
