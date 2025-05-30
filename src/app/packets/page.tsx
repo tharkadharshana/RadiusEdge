@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Eye, Search, X, Loader2, MoreHorizontal } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Eye, Search, X, Loader2, MoreHorizontal, Wand2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -28,14 +28,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
 
-export interface RadiusAttribute { // Exporting for potential re-use if needed, though API returns full packet
+export interface RadiusAttribute {
   id: string;
   name: string;
   value: string;
 }
 
-export interface RadiusPacket { // Exporting for API usage
+export interface RadiusPacket {
   id: string;
   name: string;
   description: string;
@@ -46,8 +47,8 @@ export interface RadiusPacket { // Exporting for API usage
 
 // Mock dictionary for autocomplete - remains client-side for now
 const dictionaryAttributes = [
-  "User-Name", "User-Password", "NAS-IP-Address", "NAS-Port", "Service-Type", 
-  "Framed-IP-Address", "Calling-Station-Id", "Called-Station-Id", "Acct-Status-Type", 
+  "User-Name", "User-Password", "NAS-IP-Address", "NAS-Port", "Service-Type",
+  "Framed-IP-Address", "Calling-Station-Id", "Called-Station-Id", "Acct-Status-Type",
   "Acct-Session-Id", "NAS-Identifier", "Vendor-Specific", "EAP-Message", "Message-Authenticator"
 ];
 
@@ -59,6 +60,8 @@ export default function PacketsPage() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [pastedAttributesText, setPastedAttributesText] = useState('');
+  const [isParsingAttributes, setIsParsingAttributes] = useState(false);
   const { toast } = useToast();
 
   const fetchPackets = async () => {
@@ -93,12 +96,13 @@ export default function PacketsPage() {
     setEditingPacket(packet ? JSON.parse(JSON.stringify(packet)) : null); // Deep copy
     setAttributeSearch('');
     setSuggestions([]);
+    setPastedAttributesText(''); // Reset pasted text when opening dialog
   };
 
   const handleSavePacket = async () => {
     if (!editingPacket) return;
     setIsSaving(true);
-    
+
     const packetDataToSave = {
       name: editingPacket.name,
       description: editingPacket.description,
@@ -124,11 +128,11 @@ export default function PacketsPage() {
       const savedPacket = await response.json();
 
       if (isNew) {
-        setPackets(prev => [savedPacket, ...prev]); // Add new packet to the beginning
+        setPackets(prev => [savedPacket, ...prev]);
       } else {
         setPackets(prev => prev.map(p => p.id === savedPacket.id ? savedPacket : p));
       }
-      handleEditPacket(null); // Close dialog
+      handleEditPacket(null);
       toast({ title: "Packet Saved", description: `Packet "${savedPacket.name}" has been saved.` });
     } catch (error: any) {
       console.error(`Error saving packet:`, error);
@@ -137,27 +141,21 @@ export default function PacketsPage() {
       setIsSaving(false);
     }
   };
-  
+
   const handleDeletePacket = async (packetId: string) => {
     if (!window.confirm("Are you sure you want to delete this packet?")) return;
-    
-    // Optimistically update UI, or set a deleting state
-    // const originalPackets = [...packets];
-    // setPackets(prev => prev.filter(p => p.id !== packetId));
 
     try {
       const response = await fetch(`/api/packets/${packetId}`, { method: 'DELETE' });
       if (!response.ok) {
-        // setPackets(originalPackets); // Revert if error
         const errorData = await response.json();
         throw new Error(errorData.message || 'Failed to delete packet');
       }
-      setPackets(prev => prev.filter(p => p.id !== packetId)); // Confirm removal from UI
+      setPackets(prev => prev.filter(p => p.id !== packetId));
       toast({ title: "Packet Deleted", description: "Packet successfully deleted." });
     } catch (error: any) {
       console.error("Error deleting packet:", error);
       toast({ title: "Delete Failed", description: error.message || "Could not delete packet.", variant: "destructive" });
-      // setPackets(originalPackets); // Revert if error and not using optimistic update for main state
     }
   };
 
@@ -178,7 +176,7 @@ export default function PacketsPage() {
       }
     }
   };
-  
+
   const selectSuggestion = (index: number, suggestion: string) => {
     handleAttributeChange(index, 'name', suggestion);
     setSuggestions([]);
@@ -203,14 +201,42 @@ export default function PacketsPage() {
 
   const createNewPacket = () => {
     handleEditPacket({
-      id: 'new', // Temporary ID for new packet
+      id: 'new',
       name: 'New RADIUS Packet',
       description: '',
       attributes: [{ id: `attr_client_new_1`, name: 'User-Name', value: '' }],
-      lastModified: new Date().toISOString(), // Placeholder, backend sets actual
+      lastModified: new Date().toISOString(),
       tags: [],
     });
   };
+
+  const handleParsePastedAttributesForPacket = async () => {
+    if (!editingPacket || !pastedAttributesText.trim()) {
+      toast({ title: "Nothing to parse", description: "Please paste attribute data into the text area.", variant: "destructive" });
+      return;
+    }
+    setIsParsingAttributes(true);
+    try {
+      const input: ParseRadiusAttributesInput = { rawAttributesText: pastedAttributesText };
+      const result: ParseRadiusAttributesOutput = await parseRadiusAttributesFromString(input);
+
+      const newPacketAttributes: RadiusAttribute[] = result.parsedAttributes.map(pa => ({
+        id: `attr_client_parsed_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        name: pa.name,
+        value: pa.value,
+      }));
+
+      setEditingPacket({ ...editingPacket, attributes: newPacketAttributes });
+      setPastedAttributesText('');
+      toast({ title: "Attributes Parsed", description: `${newPacketAttributes.length} attributes added/updated for the packet.` });
+    } catch (error) {
+      console.error("Error parsing attributes for packet:", error);
+      toast({ title: "Parsing Failed", description: "Could not parse attributes from text. Please check the format.", variant: "destructive" });
+    } finally {
+      setIsParsingAttributes(false);
+    }
+  };
+
 
   return (
     <div className="space-y-8">
@@ -229,8 +255,8 @@ export default function PacketsPage() {
           <CardTitle>Packet Library</CardTitle>
           <div className="flex items-center gap-2 pt-2">
             <Search className="h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder="Search packets by name, description, or tag..." 
+            <Input
+              placeholder="Search packets by name, description, or tag..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="max-w-sm"
@@ -317,7 +343,7 @@ export default function PacketsPage() {
           <DialogHeader>
             <DialogTitle>{editingPacket?.id === 'new' ? 'Create New Packet' : `Edit Packet: ${editingPacket?.name}`}</DialogTitle>
             <DialogDescription>
-              Modify packet details and attributes. Use autocomplete for attribute names.
+              Modify packet details and attributes. Use autocomplete for attribute names or paste a block of text.
             </DialogDescription>
           </DialogHeader>
           {editingPacket && (
@@ -328,7 +354,7 @@ export default function PacketsPage() {
                   id="packet-name"
                   value={editingPacket.name}
                   onChange={(e) => setEditingPacket({ ...editingPacket, name: e.target.value })}
-                  disabled={isSaving}
+                  disabled={isSaving || isParsingAttributes}
                 />
               </div>
               <div>
@@ -337,7 +363,7 @@ export default function PacketsPage() {
                   id="packet-description"
                   value={editingPacket.description}
                   onChange={(e) => setEditingPacket({ ...editingPacket, description: e.target.value })}
-                  disabled={isSaving}
+                  disabled={isSaving || isParsingAttributes}
                 />
               </div>
               <div>
@@ -347,11 +373,33 @@ export default function PacketsPage() {
                   value={editingPacket.tags.join(', ')}
                   onChange={(e) => setEditingPacket({ ...editingPacket, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })}
                   placeholder="e.g., Auth, 3GPP, Test"
-                  disabled={isSaving}
+                  disabled={isSaving || isParsingAttributes}
                 />
               </div>
 
               <h3 className="text-lg font-semibold pt-2">Attributes</h3>
+              <div className="space-y-2 pt-2 border p-3 rounded-md bg-muted/20">
+                <Label className="font-medium">Paste Attributes from Text:</Label>
+                <Textarea
+                  value={pastedAttributesText}
+                  onChange={(e) => setPastedAttributesText(e.target.value)}
+                  placeholder={'User-Name = "testuser"\nFramed-IP-Address = 10.0.0.1\nAcct-Status-Type = Start'}
+                  rows={4}
+                  className="font-mono text-xs"
+                  disabled={isSaving || isParsingAttributes}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleParsePastedAttributesForPacket}
+                  disabled={isSaving || isParsingAttributes || !pastedAttributesText.trim()}
+                  className="w-full"
+                >
+                  {isParsingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
+                  Parse from Text &amp; Add/Replace
+                </Button>
+              </div>
+
               {editingPacket.attributes.map((attr, index) => (
                 <div key={attr.id || index} className="flex items-end gap-2 p-3 border rounded-md bg-muted/30 relative">
                   <div className="flex-1">
@@ -362,7 +410,7 @@ export default function PacketsPage() {
                       onChange={(e) => handleAttributeChange(index, 'name', e.target.value)}
                       placeholder="e.g., User-Name"
                       className="font-mono"
-                      disabled={isSaving}
+                      disabled={isSaving || isParsingAttributes}
                     />
                      {attributeSearch === attr.name && suggestions.length > 0 && (
                       <Card className="absolute z-10 mt-1 w-full shadow-lg max-h-40 overflow-y-auto">
@@ -389,22 +437,22 @@ export default function PacketsPage() {
                       onChange={(e) => handleAttributeChange(index, 'value', e.target.value)}
                       placeholder="e.g., testuser"
                       className="font-mono"
-                      disabled={isSaving}
+                      disabled={isSaving || isParsingAttributes}
                     />
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => removeAttribute(index)} className="text-destructive hover:text-destructive" disabled={isSaving}>
+                  <Button variant="ghost" size="icon" onClick={() => removeAttribute(index)} className="text-destructive hover:text-destructive" disabled={isSaving || isParsingAttributes}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
-              <Button variant="outline" onClick={addAttribute} size="sm" disabled={isSaving}>
-                <PlusCircle className="mr-2 h-4 w-4" /> Add Attribute
+              <Button variant="outline" onClick={addAttribute} size="sm" disabled={isSaving || isParsingAttributes}>
+                <PlusCircle className="mr-2 h-4 w-4" /> Add Attribute Manually
               </Button>
             </div>
           )}
           <DialogFooter>
-            <DialogClose asChild><Button variant="outline" disabled={isSaving}>Cancel</Button></DialogClose>
-            <Button onClick={handleSavePacket} disabled={isSaving}>
+            <DialogClose asChild><Button variant="outline" disabled={isSaving || isParsingAttributes}>Cancel</Button></DialogClose>
+            <Button onClick={handleSavePacket} disabled={isSaving || isParsingAttributes}>
               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Save Packet
             </Button>
