@@ -13,30 +13,30 @@ let dbInstance: Database | null = null;
 
 export async function getDb(): Promise<Database> {
   if (!dbInstance) {
+    console.log_info('Attempting to open database at:', DB_PATH);
     const verboseSqlite3 = sqlite3.verbose();
     // Ensure the directory exists in production
     if (process.env.NODE_ENV === 'production') {
         const fs = await import('fs/promises');
         try {
             await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+            console.log_info('Ensured .data directory exists for production.');
         } catch (err) {
             console.error('Failed to create .data directory:', err);
-            // Depending on policy, you might want to throw here or let open() fail
         }
     }
     dbInstance = await open({
       filename: DB_PATH,
       driver: verboseSqlite3.Database,
     });
-    // Ensure WAL mode is enabled for better concurrency, if appropriate for your setup
-    // await dbInstance.exec('PRAGMA journal_mode = WAL;');
+    console.log_info('Database opened successfully.');
     await initializeDatabaseSchema(dbInstance);
   }
   return dbInstance;
 }
 
 async function initializeDatabaseSchema(db: Database): Promise<void> {
-  console.log('Initializing database schema...');
+  console.log_info('Initializing database schema...');
 
   // Scenarios Table
   await db.exec(`
@@ -50,7 +50,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       tags TEXT          -- Store as JSON string (array of strings)
     );
   `);
-  console.log('Scenarios table checked/created.');
+  console.log_info('Scenarios table schema checked/created.');
 
   // Packets Table
   await db.exec(`
@@ -63,7 +63,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       tags TEXT          -- Store as JSON string (array of strings)
     );
   `);
-  console.log('Packets table checked/created.');
+  console.log_info('Packets table schema checked/created.');
 
   // Server Configurations Table
   await db.exec(`
@@ -86,7 +86,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       scenarioExecutionSshCommands TEXT -- Store as JSON string (array of SshExecutionStep)
     );
   `);
-  console.log('Server Configurations table checked/created.');
+  console.log_info('Server Configurations table schema checked/created.');
 
   // Database Connection Configurations Table
   await db.exec(`
@@ -104,7 +104,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       validationSteps TEXT   -- Store as JSON string (array of DbValidationStepConfig)
     );
   `);
-  console.log('Database Configurations table checked/created.');
+  console.log_info('Database Configurations table schema checked/created.');
 
   // Users Table
   await db.exec(`
@@ -118,7 +118,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       passwordHash TEXT -- For storing hashed passwords (actual hashing logic TBD)
     );
   `);
-  console.log('Users table checked/created.');
+  console.log_info('Users table schema checked/created.');
 
   // Dictionaries Table (for metadata and example attributes)
   await db.exec(`
@@ -127,30 +127,33 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       name TEXT NOT NULL,
       source TEXT,
       isActive BOOLEAN DEFAULT TRUE,
-      lastUpdated TEXT,       -- Store as ISO8601 string
-      exampleAttributes TEXT  -- Store as JSON string of example Attribute objects, defaults to '[]'
+      lastUpdated TEXT,
+      exampleAttributes TEXT DEFAULT '[]' -- Ensure default is a valid JSON array string
     );
   `);
-  console.log('Dictionaries table schema base checked/created.');
+  console.log_info('Dictionaries table schema base checked/created.');
 
-  // Attempt to add exampleAttributes column if it doesn't exist
+  // Robustly check and add exampleAttributes column if missing
   try {
+    console.log_info("Checking 'dictionaries' table for 'exampleAttributes' column...");
     const columns = await db.all("PRAGMA table_info(dictionaries);");
     const hasExampleAttributesColumn = columns.some(col => (col as any).name === 'exampleAttributes');
 
     if (!hasExampleAttributesColumn) {
-      console.log("Column 'exampleAttributes' not found in 'dictionaries' table. Attempting to add it...");
-      await db.exec("ALTER TABLE dictionaries ADD COLUMN exampleAttributes TEXT;");
-      // Initialize existing rows to '[]' if the column was just added.
-      // This helps avoid issues with API trying to parse NULL.
-      await db.exec("UPDATE dictionaries SET exampleAttributes = '[]' WHERE exampleAttributes IS NULL;");
-      console.log("Column 'exampleAttributes' added to 'dictionaries' table and initialized for existing rows.");
+      console.log_warn("Column 'exampleAttributes' not found in 'dictionaries' table. Attempting to add it...");
+      await db.exec("ALTER TABLE dictionaries ADD COLUMN exampleAttributes TEXT DEFAULT '[]';");
+      console.log_info("Column 'exampleAttributes' added to 'dictionaries' table with DEFAULT '[]'.");
     } else {
-      // console.log("Column 'exampleAttributes' already exists in 'dictionaries' table.");
+      console.log_info("Column 'exampleAttributes' already exists in 'dictionaries' table.");
     }
+    // Ensure any existing NULLs are updated to '[]'
+    const updateNullsResult = await db.run("UPDATE dictionaries SET exampleAttributes = '[]' WHERE exampleAttributes IS NULL;");
+    if (updateNullsResult.changes && updateNullsResult.changes > 0) {
+        console.log_info(`Updated ${updateNullsResult.changes} rows in 'dictionaries' table to set NULL exampleAttributes to '[]'.`);
+    }
+
   } catch (error) {
-    console.error("Error checking/altering 'dictionaries' table for 'exampleAttributes' column:", error);
-    // Depending on policy, you might want to throw here or let open() fail
+    console.error("Error during 'dictionaries' table schema migration for 'exampleAttributes':", error);
   }
 
 
@@ -166,7 +169,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       details TEXT -- JSON string for logs, SQL results, etc.
     );
   `);
-  console.log('Test Results table checked/created.');
+  console.log_info('Test Results table schema checked/created.');
 
   // Test Executions Table
   await db.exec(`
@@ -185,7 +188,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       FOREIGN KEY (resultId) REFERENCES test_results(id) ON DELETE SET NULL
     );
   `);
-  console.log('Test Executions table checked/created.');
+  console.log_info('Test Executions table schema checked/created.');
 
   // Execution Logs Table
   await db.exec(`
@@ -199,7 +202,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       FOREIGN KEY (testExecutionId) REFERENCES test_executions(id) ON DELETE CASCADE
     );
   `);
-  console.log('Execution Logs table checked/created.');
+  console.log_info('Execution Logs table schema checked/created.');
 
   // AI Interactions Table
   await db.exec(`
@@ -211,10 +214,18 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       timestamp TEXT NOT NULL        -- ISO8601 string
     );
   `);
-  console.log('AI Interactions table checked/created.');
+  console.log_info('AI Interactions table schema checked/created.');
 
 
-  console.log('Database schema initialization complete.');
+  console.log_info('Database schema initialization complete.');
+}
+
+// Helper for logging with prefixes for clarity in server logs
+function console_log_info(message: string, ...optionalParams: any[]) {
+  console.info(`[DB_INIT INFO] ${message}`, ...optionalParams);
+}
+function console_log_warn(message: string, ...optionalParams: any[]) {
+    console.warn(`[DB_INIT WARN] ${message}`, ...optionalParams);
 }
 
 // Optional: Call getDb once when the module loads to ensure the DB is initialized early in development.
@@ -222,3 +233,5 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
 if (process.env.NODE_ENV !== 'production') {
   getDb().catch(err => console.error("Failed to initialize DB on module load:", err));
 }
+
+    

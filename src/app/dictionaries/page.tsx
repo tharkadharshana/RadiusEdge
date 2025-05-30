@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { UploadCloud, Eye, Trash2, PlusCircle, Info, Loader2, Edit2, Save, FileText, FileUp, MoreHorizontal, CheckSquare, Square, ChevronsUpDown, Minus } from 'lucide-react'; // Added Minus just in case, though Checkbox component handles it
+import { UploadCloud, Eye, Trash2, PlusCircle, Info, Loader2, Edit2, Save, FileText, FileUp, MoreHorizontal, CheckSquare, Square, ChevronsUpDown } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -69,8 +69,8 @@ export default function DictionariesPage() {
   const [currentAttributeToEdit, setCurrentAttributeToEdit] = useState<Partial<Attribute> & { isNew?: boolean } | null>(null);
   const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSavingAttributes, setIsSavingAttributes] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // General saving state for actions like toggle, bulk operations
+  const [isSavingAttributes, setIsSavingAttributes] = useState(false); // Specific for saving attributes in dialog
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [importMode, setImportMode] = useState<'manual' | 'paste' | 'upload'>('manual');
   const [newDictName, setNewDictName] = useState('');
@@ -84,6 +84,7 @@ export default function DictionariesPage() {
   const { toast } = useToast();
 
   const fetchDictionaries = useCallback(async () => {
+    console.log("fetchDictionaries called");
     setIsLoading(true);
     try {
       const response = await fetch('/api/dictionaries');
@@ -92,25 +93,26 @@ export default function DictionariesPage() {
         try {
           const errorData = await response.json();
           apiError = errorData.error || errorData.message || apiError;
+          console.error("API error data:", errorData);
         } catch (e) {
           const textError = await response.text().catch(() => "Could not get error text from response.");
           apiError += `. Response: ${textError.substring(0, 150)}`;
+          console.error("Non-JSON API error response:", textError);
         }
         throw new Error(apiError);
       }
       const data: Dictionary[] = await response.json();
       setDictionaries(data.map(d => ({ 
         ...d, 
-        // exampleAttributes should already be an array from the API if properly parsed.
-        // If it's a string, it means parsing failed or wasn't done by the API.
-        // The API GET routes were updated to parse this string into an array for `exampleAttributes`.
         exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [],
         attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : (d.attributes || 0),
         vendorCodes: d.vendorCodes || 0, 
       })));
+      console.log("Dictionaries fetched and set:", data.length);
     } catch (error) {
       console.error("Error fetching dictionaries (frontend catch):", error);
       toast({ title: "Error Fetching Dictionaries", description: (error as Error).message, variant: "destructive" });
+      // setDictionaries([]); // Optionally clear on error, or keep stale data
     } finally {
       setIsLoading(false);
     }
@@ -131,36 +133,26 @@ export default function DictionariesPage() {
   };
 
   const handleImportDictionary = async () => {
-    setIsSaving(true);
-    try {
-      let requestBody: any = {};
-      let toastTitle = "Import Started";
-      let toastDescription = "Processing your dictionary import...";
+    setIsSaving(true); // Use general isSaving for import dialog
+    let requestBody: any = {};
+    let toastTitle = "Import Started";
+    let toastDescription = "Processing your dictionary import...";
 
+    try {
       if (importMode === 'upload' && uploadedFiles && uploadedFiles.length > 0) {
-        if (uploadedFiles.length > 1) { // Bulk upload
-          toastTitle = "Bulk Import Started";
-          toastDescription = `Preparing ${uploadedFiles.length} files for import. This may take a while...`;
-          const filesToUploadPromises = Array.from(uploadedFiles).map(async (file) => {
-            try {
-              const content = await file.text();
-              return { name: file.name, content };
-            } catch (readError) {
-              console.error(`Error reading file ${file.name}:`, readError);
-              toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
-              return { name: file.name, content: '' }; // Send with empty content if read fails
-            }
-          });
-          requestBody.files = await Promise.all(filesToUploadPromises);
-        } else { // Single file upload
-          const file = uploadedFiles[0];
-          requestBody.rawContent = await file.text();
-          if (!newDictName) requestBody.name = file.name.split('.').slice(0, -1).join('.') || file.name;
-          else requestBody.name = newDictName;
-          if (!newDictSource) requestBody.source = "Uploaded File";
-          else requestBody.source = newDictSource;
-          toastDescription = `Importing file ${file.name}...`;
-        }
+        const filesToProcess = Array.from(uploadedFiles).map(async (file) => {
+          try {
+            const content = await file.text();
+            return { name: file.name, content };
+          } catch (readError) {
+            console.error(`Error reading file ${file.name}:`, readError);
+            toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
+            return { name: file.name, content: '' }; // Send with empty content if read fails
+          }
+        });
+        requestBody.files = await Promise.all(filesToProcess);
+        toastTitle = requestBody.files.length > 1 ? "Bulk Import Started" : "File Import Started";
+        toastDescription = `Importing ${requestBody.files.length} file(s)... This may take a while if parsing content.`;
       } else if (importMode === 'paste') {
         if (!pastedDictContent.trim()) {
           toast({ title: "No Content", description: "Please paste dictionary content.", variant: "destructive" });
@@ -194,14 +186,14 @@ export default function DictionariesPage() {
       }
       
       const resultData = await response.json();
-      if (Array.isArray(resultData)) { // Bulk import response
+      if (Array.isArray(resultData)) { 
          toast({ title: "Bulk Import Processed", description: `${resultData.length} dictionary entries created/updated.` });
-      } else { // Single import response
+      } else { 
          toast({ title: "Dictionary Imported", description: `Dictionary "${resultData.name}" added/updated.` });
       }
 
       resetImportDialog();
-      fetchDictionaries();
+      await fetchDictionaries(); // Ensure this is awaited
       setSelectedDictionaryIds([]);
     } catch (error) {
       console.error("Error importing dictionary:", error);
@@ -237,26 +229,29 @@ export default function DictionariesPage() {
     } catch (error) {
       console.error("Error toggling dictionary status:", error);
       toast({ title: "Update Failed", description: (error as Error).message, variant: "destructive" });
-      setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict)); // Revert on error
+      setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict)); 
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDeleteDictionary = async (id: string, name: string) => {
+    console.log("Frontend: handleDeleteDictionary called for ID:", id, "Name:", name);
     if (!window.confirm(`Are you sure you want to delete the dictionary "${name}"? This will also remove its attributes.`)) return;
     setIsSaving(true);
     try {
       const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
+      console.log("Frontend: Delete API response status:", response.status);
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || errorData.message || 'Failed to delete dictionary');
+        const errorData = await response.json().catch(() => ({ message: "Failed to parse error response from delete API." }));
+        console.error("Frontend: Delete API error data:", errorData);
+        throw new Error(errorData.error || errorData.message || `Failed to delete dictionary. Status: ${response.status}`);
       }
-      setDictionaries(prev => prev.filter(d => d.id !== id));
-      setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id));
       toast({ title: "Dictionary Deleted", description: `Dictionary "${name}" removed.` });
+      await fetchDictionaries(); // Await fetch before further state changes
+      setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id));
     } catch (error) {
-      console.error("Error deleting dictionary:", error);
+      console.error("Frontend: Error deleting dictionary:", error);
       toast({ title: "Delete Failed", description: (error as Error).message, variant: "destructive" });
     } finally {
       setIsSaving(false);
@@ -266,7 +261,7 @@ export default function DictionariesPage() {
   const handleViewDictionary = (dictionary: Dictionary) => {
     setSelectedDictionaryForView(dictionary);
     const attributesArray = Array.isArray(dictionary.exampleAttributes) ? dictionary.exampleAttributes : [];
-    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); // Deep copy
+    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); 
   };
 
   const handleViewAttributeDetail = (attribute: Attribute) => {
@@ -317,23 +312,20 @@ export default function DictionariesPage() {
       const response = await fetch(`/api/dictionaries/${selectedDictionaryForView.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), // Send as array
+        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), 
       });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || errorData.message || 'Failed to save example attributes');
       }
       const updatedDictionary: Dictionary = await response.json();
-      // Update the main dictionaries list
-      setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? {
-        ...updatedDictionary,
-        exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : [],
-        attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : (updatedDictionary.attributes || 0),
-        vendorCodes: updatedDictionary.vendorCodes || 0,
-      } : d));
-      // Update the selected dictionary for view
+      
+      // Await fetchDictionaries to ensure the main list is fresh before updating selected item
+      await fetchDictionaries();
+      
       setSelectedDictionaryForView(prev => prev ? {
-        ...prev,
+        ...prev, // Keep existing if not fully replaced by fetch
+        ...updatedDictionary, // Overlay with potentially updated fields like lastUpdated
         exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : [],
         attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0,
       } : null);
@@ -355,12 +347,12 @@ export default function DictionariesPage() {
   };
 
   const isAllSelected = dictionaries.length > 0 && selectedDictionaryIds.length === dictionaries.length;
-  const isSomeSelectedAndNotAll = selectedDictionaryIds.length > 0 && !isAllSelected;
+  const isSomeSelected = selectedDictionaryIds.length > 0 && !isAllSelected;
 
   let headerCheckboxCheckedState: boolean | 'indeterminate';
   if (isAllSelected) {
     headerCheckboxCheckedState = true;
-  } else if (isSomeSelectedAndNotAll) {
+  } else if (isSomeSelected) {
     headerCheckboxCheckedState = 'indeterminate';
   } else {
     headerCheckboxCheckedState = false;
@@ -374,13 +366,10 @@ export default function DictionariesPage() {
     }
   };
 
-
   const handleSelectRow = (id: string, checked: boolean) => {
-    if (checked) {
-      setSelectedDictionaryIds(prev => [...prev, id]);
-    } else {
-      setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id));
-    }
+    setSelectedDictionaryIds(prev => 
+      checked ? [...prev, id] : prev.filter(selectedId => selectedId !== id)
+    );
   };
 
   const handleBulkEnableDisable = async (enable: boolean) => {
@@ -400,9 +389,12 @@ export default function DictionariesPage() {
       }).then(async res => {
         if (!res.ok) {
             const errorData = await res.json().catch(() => ({message: `HTTP error ${res.status}`}));
-            return Promise.reject(new Error(`Failed for dictionary ID ${id}: ${errorData.message || res.statusText}`));
+            throw new Error(`Failed for dictionary ID ${id}: ${errorData.message || res.statusText}`);
         }
         return res.json();
+      }).catch(error => {
+        // Rethrow to be caught by Promise.allSettled
+        throw new Error(error.message || `Failed to ${action.toLowerCase()} dictionary ID ${id}`);
       })
     );
 
@@ -427,12 +419,13 @@ export default function DictionariesPage() {
        toast({ title: `No Dictionaries ${action}d`, description: "The operation completed but no dictionaries were changed.", variant: "default" });
     }
 
-    fetchDictionaries(); 
+    await fetchDictionaries(); 
     setSelectedDictionaryIds([]); 
     setIsSaving(false);
   };
 
   const handleBulkDelete = async () => {
+    console.log("Frontend: handleBulkDelete called with selected IDs:", selectedDictionaryIds);
     if (selectedDictionaryIds.length === 0) {
       toast({ title: "No Dictionaries Selected", description: "Please select dictionaries to delete.", variant: "default" });
       return;
@@ -445,23 +438,23 @@ export default function DictionariesPage() {
     const deletePromises = selectedDictionaryIds.map(id =>
       fetch(`/api/dictionaries/${id}`, { method: 'DELETE' })
       .then(async res => {
+        console.log(`Frontend: Bulk delete API response for ID ${id}:`, res.status);
         if (!res.ok) {
-            let errorMsg = `HTTP ${res.status} ${res.statusText}`;
+            let errorMsg = `Failed to delete dictionary ID ${id}. Status: ${res.status}`;
             try {
                 const errorData = await res.json();
+                console.error(`Frontend: Bulk delete API error data for ID ${id}:`, errorData);
                 errorMsg = errorData.message || errorData.error || errorMsg;
             } catch (e) { /* ignore if response is not json */ }
-            const errorToThrow = new Error(`Dictionary ID ${id}: ${errorMsg}`);
-            (errorToThrow as any).dictionaryId = id;
-            throw errorToThrow;
+            throw new Error(errorMsg);
         }
+        // If successful, return a success marker
         return { id, deleted: true, apiResponse: await res.json().catch(() => ({})) };
       })
       .catch(error => {
-          const errorMessage = error.message || 'Unknown error during delete operation';
-          const finalError = new Error(error.dictionaryId ? errorMessage : `Dictionary ID ${id}: ${errorMessage}`);
-          (finalError as any).dictionaryId = error.dictionaryId || id;
-          throw finalError; 
+          console.error(`Frontend: Error in fetch promise for ID ${id}:`, error);
+          // Ensure the error thrown is an Error instance with a message
+          throw new Error(error.message || `Failed to process deletion for dictionary ID ${id} due to an unknown error.`);
         })
     );
 
@@ -473,9 +466,8 @@ export default function DictionariesPage() {
       if (result.status === 'fulfilled') {
         successfulDeletesCount++;
       } else { 
-        const reason = result.reason as Error & { dictionaryId?: string };
-        failedDeletesMessages.push(reason.message || `Failed to delete ID ${reason.dictionaryId || 'unknown'}`);
-        console.error(`Bulk delete failure for ID ${reason.dictionaryId || 'unknown'}:`, reason.message);
+        failedDeletesMessages.push(result.reason.message);
+        console.error(`Frontend: Bulk delete failure reported by Promise.allSettled:`, result.reason.message);
       }
     });
 
@@ -494,8 +486,14 @@ export default function DictionariesPage() {
     } else { 
        toast({ title: "Bulk Delete Failed", description: "No dictionaries were deleted. All attempts failed. Check console for errors.", variant: "destructive" });
     }
-
-    fetchDictionaries(); 
+    
+    console.log("Frontend: Calling fetchDictionaries after bulk delete operations.");
+    try {
+      await fetchDictionaries(); 
+    } catch (fetchError) {
+       console.error("Frontend: Failed to refresh dictionaries after bulk delete:", fetchError);
+       toast({ title: "Refresh Failed", description: "Could not refresh dictionary list after deletion.", variant: "destructive" });
+    }
     setSelectedDictionaryIds([]); 
     setIsSaving(false);
   };
@@ -605,8 +603,8 @@ export default function DictionariesPage() {
                 <TableHead className="w-[50px] px-4">
                    <Checkbox
                     checked={headerCheckboxCheckedState}
-                    onCheckedChange={(newIsChecked) => {
-                        handleSelectAll(newIsChecked as boolean);
+                    onCheckedChange={(checked) => {
+                        handleSelectAll(!!checked); // Ensure boolean for Radix onCheckedChange
                     }}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
@@ -766,3 +764,5 @@ export default function DictionariesPage() {
   );
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
+
+    

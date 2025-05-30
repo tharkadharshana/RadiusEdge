@@ -24,7 +24,16 @@ const parseJsonField = (jsonString: string | null | undefined, defaultValue: any
   }
   try {
     const parsed = JSON.parse(jsonString);
-    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
+    // More robust check for Attribute array
+    if (Array.isArray(parsed) && parsed.every(item => 
+        typeof item === 'object' && 
+        item !== null && 
+        typeof item.id === 'string' &&
+        typeof item.name === 'string' && 
+        typeof item.code === 'string' && 
+        typeof item.type === 'string'
+        // Other fields are optional or can be added if needed for validation
+    )) {
       return parsed as Attribute[];
     }
     // console.warn('API [id]: Parsed JSON field for attributes was not an array of valid Attribute objects. Input snippet:', jsonString.substring(0,100));
@@ -84,7 +93,7 @@ interface PutRequestBody {
   source?: string;
   isActive?: boolean;
   rawContent?: string; // For re-parsing dictionary file content
-  exampleAttributes?: Attribute[]; // Allow updating exampleAttributes directly (e.g. from manual edits on frontend)
+  exampleAttributes?: Attribute[] | string; // Allow updating exampleAttributes directly (e.g. from manual edits on frontend)
 }
 
 // PUT (update) a dictionary's metadata by ID
@@ -97,7 +106,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
     }
 
-    let exampleAttributesForDb: string | undefined = undefined; // This will be the JSON string
+    let exampleAttributesForDb: string | undefined = undefined; 
     let vendorInfo: { vendorName?: string; vendorId?: string } = {};
     let finalName = body.name !== undefined ? body.name : existingDict.name as string;
     let finalSource = body.source !== undefined ? body.source : existingDict.source as string | null;
@@ -121,31 +130,33 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
         exampleAttributesForDb = JSON.stringify(parsedExampleAttributes);
         vendorInfo = { vendorName: parsedResult.vendorName, vendorId: parsedResult.vendorId };
 
-        // If name/source not explicitly provided in PUT body, use parsed vendor info if available
         if (body.name === undefined && vendorInfo.vendorName) finalName = vendorInfo.vendorName;
         if (body.source === undefined && vendorInfo.vendorName) finalSource = vendorInfo.vendorName;
 
         console.log(`API [id]: Re-parsing complete for dictionary ${params.id}. Vendor: ${vendorInfo.vendorName}, Attributes found: ${parsedExampleAttributes.length}`);
       } catch (parseError: any) {
         console.warn(`API [id]: AI parsing of dictionary content failed during PUT for ${params.id}:`, parseError.message);
-        // If parsing fails, do not overwrite existing exampleAttributes unless explicitly provided
         if (body.exampleAttributes === undefined) {
           exampleAttributesForDb = existingDict.exampleAttributes as string | undefined;
+        } else if (typeof body.exampleAttributes === 'string') {
+          exampleAttributesForDb = body.exampleAttributes;
         } else {
           exampleAttributesForDb = JSON.stringify(body.exampleAttributes || []);
         }
       }
     } else if (body.exampleAttributes !== undefined) {
-      // If rawContent is not provided, but exampleAttributes is, use that directly
-      exampleAttributesForDb = JSON.stringify(body.exampleAttributes);
+       if (typeof body.exampleAttributes === 'string') {
+          exampleAttributesForDb = body.exampleAttributes;
+        } else {
+          exampleAttributesForDb = JSON.stringify(body.exampleAttributes);
+        }
     } else {
-      // No rawContent and no explicit exampleAttributes provided, keep existing
       exampleAttributesForDb = existingDict.exampleAttributes as string | undefined;
     }
 
     const updatedDictData = {
       name: finalName,
-      source: finalSource || 'Unknown', // Ensure source is not null
+      source: finalSource || 'Unknown', 
       isActive: typeof body.isActive === 'boolean' ? (body.isActive ? 1 : 0) : existingDict.isActive,
       exampleAttributes: exampleAttributesForDb === undefined ? existingDict.exampleAttributes : exampleAttributesForDb,
       lastUpdated: new Date().toISOString(),
@@ -187,7 +198,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
         lastUpdated: validLastUpdatedAfterSave,
         exampleAttributes: exampleAttrsRet,
         attributes: exampleAttrsRet.length,
-        vendorCodes: vendorInfo.vendorId ? 1 : 0, // This might not be accurate if only exampleAttributes were updated without re-parsing
+        vendorCodes: vendorInfo.vendorId ? 1 : 0, 
     };
 
     return NextResponse.json(dictionaryToReturn);
@@ -200,14 +211,17 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
 
 // DELETE a dictionary's metadata by ID
 export async function DELETE(request: NextRequest, { params }: { params: Params }) {
+  console.log(`API DELETE: Attempting to delete dictionary with ID: ${params.id}`); // API Log
   try {
     const db = await getDb();
     const result = await db.run('DELETE FROM dictionaries WHERE id = ?', params.id);
+    console.log(`API DELETE: Result for ID ${params.id}:`, result); // API Log
 
     if (result.changes === 0) {
+      console.warn(`API DELETE: Dictionary not found or no changes made for ID: ${params.id}`); // API Log
       return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
     }
-
+    console.log(`API DELETE: Successfully deleted dictionary ID: ${params.id}`); // API Log
     return NextResponse.json({ message: 'Dictionary deleted successfully' }, { status: 200 });
   } catch (error: any) {
     console.error(`Failed to delete dictionary ${params.id} (API Error):`, error.stack || error);
@@ -216,3 +230,5 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
   }
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
+
+    
