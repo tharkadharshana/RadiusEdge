@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X, Wand2, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -30,8 +30,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area'; 
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/hooks/use-toast';
+import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
+
 
 type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end';
 
@@ -114,9 +117,9 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   sql: Database,
   delay: Clock,
   loop_start: Repeat,
-  loop_end: Repeat, 
+  loop_end: Repeat,
   conditional_start: GitBranch,
-  conditional_end: GitBranch, 
+  conditional_end: GitBranch,
 };
 
 export default function ScenariosPage() {
@@ -124,6 +127,9 @@ export default function ScenariosPage() {
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
   const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [pastedAttributesText, setPastedAttributesText] = useState('');
+  const [isParsingAttributes, setIsParsingAttributes] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     const templateId = searchParams.get('template');
@@ -145,6 +151,7 @@ export default function ScenariosPage() {
 
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
+    setPastedAttributesText(''); // Clear pasted text when opening/closing dialog
   };
 
   const handleSaveScenario = () => {
@@ -291,6 +298,39 @@ export default function ScenariosPage() {
     }
   };
 
+  const handleParsePastedAttributes = async (stepIndex: number) => {
+    if (!editingScenario || !pastedAttributesText.trim()) {
+      toast({ title: "Nothing to parse", description: "Please paste attribute data into the text area.", variant: "destructive" });
+      return;
+    }
+    setIsParsingAttributes(true);
+    try {
+      const input: ParseRadiusAttributesInput = { rawAttributesText: pastedAttributesText };
+      const result: ParseRadiusAttributesOutput = await parseRadiusAttributesFromString(input);
+      
+      const newExpectedAttributes: ExpectedReplyAttribute[] = result.parsedAttributes.map(pa => ({
+        id: `exp_attr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, // ensure unique ID
+        name: pa.name,
+        value: pa.value,
+      }));
+
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'radius') {
+        // Replace existing or add new ones
+        step.details.expectedAttributes = newExpectedAttributes;
+        setEditingScenario({ ...editingScenario, steps: updatedSteps });
+        setPastedAttributesText(''); // Clear textarea after parsing
+        toast({ title: "Attributes Parsed", description: `${newExpectedAttributes.length} attributes added/updated.` });
+      }
+    } catch (error) {
+      console.error("Error parsing attributes:", error);
+      toast({ title: "Parsing Failed", description: "Could not parse attributes from text. Please check the format.", variant: "destructive" });
+    } finally {
+      setIsParsingAttributes(false);
+    }
+  };
+
 
   return (
     <div className="space-y-8">
@@ -392,7 +432,7 @@ export default function ScenariosPage() {
           {editingScenario && (
             <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden">
               {/* Left Panel: Scenario Details & Variables */}
-              <ScrollArea className="md:col-span-1 h-full"> 
+              <ScrollArea className="md:col-span-1 h-full">
                 <div className="space-y-4 pr-4">
                   <Card>
                     <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
@@ -444,7 +484,7 @@ export default function ScenariosPage() {
               </ScrollArea>
 
               {/* Right Panel: Scenario Steps */}
-              <div className="md:col-span-2 flex flex-col h-full"> 
+              <div className="md:col-span-2 flex flex-col h-full">
                 <div className="flex justify-between items-center mb-2 flex-shrink-0">
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
                     <DropdownMenu>
@@ -463,7 +503,7 @@ export default function ScenariosPage() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                 </div>
-                <ScrollArea className="flex-grow pr-2"> 
+                <ScrollArea className="flex-grow pr-2">
                   <div className="space-y-4">
                     {editingScenario.steps.map((step, index) => {
                       const StepIcon = stepIcons[step.type];
@@ -494,23 +534,43 @@ export default function ScenariosPage() {
                                   </SelectContent>
                                 </Select>
                               </div>
+                              
+                              <div className="space-y-2 pt-2">
+                                <Label className="font-medium">Expected Reply Attributes (Paste or Add Manually):</Label>
+                                <Textarea 
+                                  value={pastedAttributesText} 
+                                  onChange={(e) => setPastedAttributesText(e.target.value)}
+                                  placeholder={'User-Name = "testuser"\nFramed-IP-Address = 10.0.0.1\nAcct-Status-Type = Start'}
+                                  rows={3}
+                                  className="font-mono text-xs"
+                                />
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={() => handleParsePastedAttributes(index)} 
+                                  disabled={isParsingAttributes}
+                                  className="w-full"
+                                >
+                                  {isParsingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
+                                  Parse from Text & Add/Replace
+                                </Button>
+                              </div>
 
-                              <Label className="font-medium">Expected Reply Attributes:</Label>
                               {(step.details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => (
                                 <div key={attr.id} className="flex items-end gap-2 p-2 border rounded-md bg-muted/20">
                                   <div className="flex-1">
                                     <Label htmlFor={`exp-attr-name-${attr.id}`} className="text-xs">Attribute Name</Label>
-                                    <Input 
-                                      id={`exp-attr-name-${attr.id}`} 
-                                      value={attr.name} 
+                                    <Input
+                                      id={`exp-attr-name-${attr.id}`}
+                                      value={attr.name}
                                       onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'name', e.target.value)}
                                       placeholder="e.g., Framed-IP-Address"
                                     />
                                   </div>
                                   <div className="flex-1">
                                     <Label htmlFor={`exp-attr-value-${attr.id}`} className="text-xs">Expected Value</Label>
-                                    <Input 
-                                      id={`exp-attr-value-${attr.id}`} 
+                                    <Input
+                                      id={`exp-attr-value-${attr.id}`}
                                       value={attr.value}
                                       onChange={(e) => handleExpectedReplyAttributeChange(index, attr.id, 'value', e.target.value)}
                                       placeholder="e.g., 192.168.0.1"
@@ -522,9 +582,9 @@ export default function ScenariosPage() {
                                 </div>
                               ))}
                               <Button variant="outline" size="sm" onClick={() => addExpectedReplyAttribute(index)}>
-                                <PlusCircle className="mr-2 h-3 w-3" /> Add Expected Attribute
+                                <PlusCircle className="mr-2 h-3 w-3" /> Add Expected Attribute Manually
                               </Button>
-                              
+
                               <div className="grid grid-cols-2 gap-2 pt-2">
                                 <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })}/></div>
                                 <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })}/></div>
@@ -572,5 +632,3 @@ export default function ScenariosPage() {
     </div>
   );
 }
-
-    
