@@ -81,15 +81,13 @@ export function AppSidebar() {
       <SidebarHeader className="p-4">
         <Link href="/" className="flex items-center gap-2">
           <Logo className="h-8 w-8 text-primary" />
-          {/* 
-            Render SheetTitle if mobile OR if desktop and expanded.
-            This ensures SheetContent (which is DialogContent) has a title for accessibility in mobile view.
-          */}
-          {(isMobile || state === "expanded") && (
-            <SheetTitle asChild>
+          {isMobile ? ( // If mobile, it's inside a Sheet, so SheetTitle is needed for accessibility
+            <SheetTitle asChild> 
               <h1 className="text-xl font-semibold text-foreground">RadiusEdge</h1>
             </SheetTitle>
-          )}
+          ) : state === "expanded" ? ( // If desktop and expanded, just a normal h1
+            <h1 className="text-xl font-semibold text-foreground">RadiusEdge</h1>
+          ) : null /* Otherwise (desktop collapsed), render no title text */}
         </Link>
       </SidebarHeader>
       <SidebarContent className="flex-1 p-2">
@@ -108,9 +106,6 @@ export function AppSidebar() {
                 {/* 
                   Only render sub-menu if desktop sidebar is expanded.
                   Mobile sheet will show all items directly or handle sub-navigation differently if needed.
-                  Currently, sub-items are not shown when sidebar is an icon-only bar or mobile sheet.
-                  This part might need adjustment depending on desired mobile sub-menu behavior.
-                  For now, focusing on the title accessibility.
                 */}
                 {(state === 'expanded' && !isMobile) && ( 
                   <SidebarMenuSub>
