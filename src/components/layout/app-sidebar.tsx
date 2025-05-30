@@ -16,6 +16,7 @@ import {
   Waypoints,
   DatabaseZap,
   Users,
+  UploadCloud, // Added for Packet Importer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -47,7 +48,7 @@ const navItems: NavItem[] = [
   { href: "/scenarios", label: "Scenario Builder", icon: Waypoints },
   { href: "/packets", label: "Packet Editor", icon: FilePenLine },
   { href: "/dictionaries", label: "Dictionaries", icon: BookText },
-  // { href: "/import", label: "Packet Importer", icon: UploadCloud }, // Removed
+  { href: "/import", label: "Packet Importer", icon: UploadCloud }, // Re-added
   { href: "/results", label: "Results Dashboard", icon: BarChart3 },
   { href: "/execute", label: "Execution Console", icon: TerminalSquare },
   {
