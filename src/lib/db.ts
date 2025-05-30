@@ -96,10 +96,22 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Database Configurations table checked/created.');
 
+  // Users Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT,
+      role TEXT, -- 'admin', 'editor', 'viewer', 'operator'
+      status TEXT, -- 'active', 'invited', 'suspended'
+      lastLogin TEXT, -- Store as ISO8601 string or similar
+      passwordHash TEXT -- For storing hashed passwords (actual hashing logic TBD)
+    );
+  `);
+  console.log('Users table checked/created.');
 
   // You can add more table creations here as we build out the backend
   // For example:
-  // CREATE TABLE IF NOT EXISTS users (...)
   // CREATE TABLE IF NOT EXISTS execution_results (...)
   // CREATE TABLE IF NOT EXISTS execution_logs (...)
 
