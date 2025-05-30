@@ -37,7 +37,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
 import type { ParseDictionaryContentOutput, ParsedAttribute, ParsedEnum } from '@/ai/flows/parse-dictionary-file-content';
 
-// Adjusted Attribute interface to better match ParsedAttribute from the AI flow
 export interface Attribute {
   id: string;
   name: string;
@@ -46,7 +45,7 @@ export interface Attribute {
   vendor?: string;
   description?: string;
   options?: string[];
-  enumValues?: (string | ParsedEnum)[]; // Can be simple strings or ParsedEnum objects
+  enumValues?: (string | ParsedEnum)[]; 
   examples?: string;
 }
 
@@ -54,11 +53,11 @@ export interface Dictionary {
   id: string;
   name: string;
   source: string;
-  attributes: number; // Count of exampleAttributes
-  vendorCodes: number; // Placeholder
+  attributes: number; 
+  vendorCodes: number; 
   isActive: boolean;
-  lastUpdated: string; // ISO string
-  exampleAttributes?: Attribute[]; // Array of actual attribute objects
+  lastUpdated: string; 
+  exampleAttributes?: Attribute[]; 
 }
 
 
@@ -100,8 +99,12 @@ export default function DictionariesPage() {
         throw new Error(apiError);
       }
       const data: Dictionary[] = await response.json();
-      // API returns exampleAttributes as an array of objects already parsed from JSON string by the API GET routes
-      setDictionaries(data.map(d => ({ ...d, attributes: d.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes || 0 })));
+      setDictionaries(data.map(d => ({ 
+        ...d, 
+        attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : (d.attributes || 0), 
+        vendorCodes: d.vendorCodes || 0,
+        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [] 
+      })));
     } catch (error) {
       console.error("Error fetching dictionaries (frontend catch):", error);
       toast({ title: "Error Fetching Dictionaries", description: (error as Error).message, variant: "destructive" });
@@ -158,7 +161,6 @@ export default function DictionariesPage() {
         toast({ title: "Bulk Import Processed", description: `${newDictionaries.length} dictionary entries created/updated.` });
 
       } else {
-        // Single import (manual, paste, or single file upload with content)
         let rawContent: string | undefined = undefined;
         let nameForApi = newDictName;
         let sourceForApi = newDictSource;
@@ -226,7 +228,6 @@ export default function DictionariesPage() {
     } catch (error) {
       console.error("Error toggling dictionary status:", error);
       toast({ title: "Update Failed", description: (error as Error).message, variant: "destructive" });
-      // Revert optimistic update
       setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict));
     } finally {
       setIsSaving(false);
@@ -260,7 +261,6 @@ export default function DictionariesPage() {
   };
 
   const handleViewAttributeDetail = (attribute: Attribute) => {
-    console.log("Selected attribute for detail view:", attribute);
     let details = `Name: ${attribute.name}\nCode: ${attribute.code}\nType: ${attribute.type}`;
     if (attribute.vendor) details += `\nVendor: ${attribute.vendor}`;
     if (attribute.description) details += `\nDescription: ${attribute.description}`;
@@ -271,7 +271,7 @@ export default function DictionariesPage() {
     toast({ 
         title: `Attribute: ${attribute.name}`, 
         description: <pre className="whitespace-pre-wrap text-xs">{details}</pre>,
-        duration: 10000 // Allow more time to read details
+        duration: 10000 
     });
   };
 
@@ -318,7 +318,7 @@ export default function DictionariesPage() {
       setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? {
         ...updatedDictionary,
         attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0,
-        vendorCodes: d.vendorCodes || 0, // Preserve original vendorCodes for now
+        vendorCodes: d.vendorCodes || 0, 
         exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : []
       } : d));
       setSelectedDictionaryForView(prev => prev ? {
@@ -339,10 +339,12 @@ export default function DictionariesPage() {
     if (!value || value.length === 0) return 'N/A';
     return value.map(e => {
         if (typeof e === 'string') return e;
-        return `${e.name} (${e.value})`; // Assuming e is ParsedEnum
+        return `${e.name} (${e.value})`; 
     }).join(', ');
   };
 
+  const isAllSelected = dictionaries.length > 0 && selectedDictionaryIds.length === dictionaries.length;
+  const isSomeSelected = selectedDictionaryIds.length > 0 && selectedDictionaryIds.length < dictionaries.length;
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -384,17 +386,28 @@ export default function DictionariesPage() {
     );
 
     const results = await Promise.allSettled(updatePromises);
-    const successfulUpdates = results.filter(r => r.status === 'fulfilled').length;
-    const failedUpdates = results.length - successfulUpdates;
+    let successfulUpdates = 0;
+    const failedUpdatesMessages: string[] = [];
 
-    if (failedUpdates > 0) {
-      toast({ title: `${action} Partially Failed`, description: `${successfulUpdates} succeeded, ${failedUpdates} failed.`, variant: "destructive" });
-    } else {
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        successfulUpdates++;
+      } else {
+        failedUpdatesMessages.push(result.reason.message);
+      }
+    });
+
+    if (failedUpdatesMessages.length > 0) {
+      const failedSummary = failedUpdatesMessages.length > 3 ? failedUpdatesMessages.slice(0, 3).join('; ') + '...' : failedUpdatesMessages.join('; ');
+      toast({ title: `${action} Partially Failed`, description: `${successfulUpdates} succeeded. ${failedUpdatesMessages.length} failed: ${failedSummary}. Check console.`, variant: "destructive", duration: 7000 });
+    } else if (successfulUpdates > 0) {
       toast({ title: `${action} Successful`, description: `All ${successfulUpdates} selected dictionaries updated.` });
+    } else {
+       toast({ title: `No Dictionaries ${action}d`, description: "The operation completed but no dictionaries were changed.", variant: "default" });
     }
 
-    fetchDictionaries(); // Refresh the list
-    setSelectedDictionaryIds([]); // Clear selection
+    fetchDictionaries(); 
+    setSelectedDictionaryIds([]); 
     setIsSaving(false);
   };
 
@@ -412,30 +425,59 @@ export default function DictionariesPage() {
       fetch(`/api/dictionaries/${id}`, { method: 'DELETE' })
       .then(async res => {
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({message: `HTTP error ${res.status}`}));
-            return Promise.reject(new Error(`Failed for dictionary ID ${id}: ${errorData.message || res.statusText}`));
+            let errorMsg = `HTTP ${res.status} ${res.statusText}`;
+            try {
+                const errorData = await res.json();
+                errorMsg = errorData.message || errorData.error || errorMsg;
+            } catch (e) { /* ignore if response is not json */ }
+            const errorToThrow = new Error(`Dictionary ID ${id}: ${errorMsg}`);
+            (errorToThrow as any).dictionaryId = id;
+            throw errorToThrow;
         }
-        return res.json();
+        return { id, deleted: true, apiResponse: await res.json().catch(() => ({})) };
       })
+      .catch(error => {
+          const errorMessage = error.message || 'Unknown error during delete operation';
+          const finalError = new Error(error.dictionaryId ? errorMessage : `Dictionary ID ${id}: ${errorMessage}`);
+          (finalError as any).dictionaryId = error.dictionaryId || id;
+          throw finalError; 
+        })
     );
 
     const results = await Promise.allSettled(deletePromises);
-    const successfulDeletes = results.filter(r => r.status === 'fulfilled').length;
-    const failedDeletes = results.length - successfulDeletes;
+    let successfulDeletesCount = 0;
+    const failedDeletesMessages: string[] = [];
 
-    if (failedDeletes > 0) {
-      toast({ title: "Bulk Delete Partially Failed", description: `${successfulDeletes} succeeded, ${failedDeletes} failed.`, variant: "destructive" });
-    } else {
-      toast({ title: "Bulk Delete Successful", description: `All ${successfulDeletes} selected dictionaries deleted.` });
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        successfulDeletesCount++;
+      } else { 
+        const reason = result.reason as Error & { dictionaryId?: string };
+        failedDeletesMessages.push(reason.message || `Failed to delete ID ${reason.dictionaryId || 'unknown'}`);
+        console.error(`Bulk delete failure for ID ${reason.dictionaryId || 'unknown'}:`, reason.message);
+      }
+    });
+
+    if (failedDeletesMessages.length > 0) {
+       const failedSummary = failedDeletesMessages.length > 3 ? failedDeletesMessages.slice(0, 3).join('; ') + '...' : failedDeletesMessages.join('; ');
+      toast({
+        title: "Bulk Delete Partially Failed",
+        description: `${successfulDeletesCount} succeeded. ${failedDeletesMessages.length} failed: ${failedSummary}. Check console for full details.`,
+        variant: "destructive",
+        duration: 10000
+      });
+    } else if (successfulDeletesCount > 0) {
+      toast({ title: "Bulk Delete Successful", description: `All ${successfulDeletesCount} selected dictionaries deleted.` });
+    } else if (selectedDictionaryIds.length > 0 && successfulDeletesCount === 0 && failedDeletesMessages.length === 0) {
+       toast({ title: "Bulk Delete: No Changes", description: "Operation completed. No dictionaries were deleted (perhaps they were already gone or an unknown issue occurred).", variant: "default" });
+    } else { 
+       toast({ title: "Bulk Delete Failed", description: "No dictionaries were deleted. All attempts failed. Check console for errors.", variant: "destructive" });
     }
 
-    fetchDictionaries(); // Refresh the list
-    setSelectedDictionaryIds([]); // Clear selection
+    fetchDictionaries(); 
+    setSelectedDictionaryIds([]); 
     setIsSaving(false);
   };
-
-  const isAllSelected = dictionaries.length > 0 && selectedDictionaryIds.length === dictionaries.length;
-  const isSomeSelected = selectedDictionaryIds.length > 0 && selectedDictionaryIds.length < dictionaries.length;
 
 
   return (
@@ -539,10 +581,10 @@ export default function DictionariesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[50px]">
+                <TableHead className="w-[50px] px-4">
                   <Checkbox
                     checked={isAllSelected}
-                    onCheckedChange={handleSelectAll}
+                    onCheckedChange={(checkedState) => handleSelectAll(checkedState as boolean)}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
                     indeterminate={isSomeSelected ? true : undefined}
@@ -559,7 +601,7 @@ export default function DictionariesPage() {
             <TableBody>
               {dictionaries.map((dict) => (
                 <TableRow key={dict.id} data-state={selectedDictionaryIds.includes(dict.id) ? "selected" : ""}>
-                  <TableCell>
+                  <TableCell className="px-4">
                     <Checkbox
                       checked={selectedDictionaryIds.includes(dict.id)}
                       onCheckedChange={(checked) => handleSelectRow(dict.id, !!checked)}
@@ -702,5 +744,3 @@ export default function DictionariesPage() {
   );
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
-
-    
