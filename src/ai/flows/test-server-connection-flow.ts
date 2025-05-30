@@ -7,6 +7,7 @@
  * - testServerConnection - A function that simulates testing the server connection.
  * - TestServerConnectionInput - The input type for the testServerConnection function.
  * - TestServerConnectionOutput - The return type for the testServerConnection function.
+ * - ClientTestStep - The type for individual client-provided steps.
  */
 
 import {ai} from '@/ai/genkit';
@@ -19,6 +20,7 @@ const ClientTestStepSchema = z.object({
   isEnabled: z.boolean().describe('Whether this step should be executed.'),
   isMandatory: z.boolean().optional().describe('Indicates if the step is considered mandatory by the client.'),
   type: z.enum(['default', 'custom']).optional().describe('The type of step, for client-side differentiation.'),
+  expectedOutputContains: z.string().optional().describe('A substring that the simulated output must contain for the step to be considered successful.'),
 });
 export type ClientTestStep = z.infer<typeof ClientTestStepSchema>;
 
@@ -60,11 +62,10 @@ function interpolateCommand(command: string, serverInfo: Pick<TestServerConnecti
     interpolated = interpolated.replace(/\$\{sshUser\}/g, serverInfo.sshUser);
     interpolated = interpolated.replace(/\$\{sshPort\}/g, String(serverInfo.sshPort));
     
-    // Special handling for serverType dependent commands
     if (interpolated.includes('${serverType === "freeradius" ? "freeradius" : "radiusd"}')) {
         const radiusdCmd = serverInfo.serverType === "freeradius" ? "freeradius" : "radiusd";
         interpolated = interpolated.replace(/\$\{serverType === "freeradius" \? "freeradius" : "radiusd"\}/g, radiusdCmd);
-    } else { // General replacement for serverType if not in conditional
+    } else { 
         interpolated = interpolated.replace(/\$\{serverType\}/g, serverInfo.serverType);
     }
     return interpolated;
@@ -91,14 +92,15 @@ async function simulateStepExecution(
 
     const cmdLower = interpolatedCommand.toLowerCase();
     let successRate = 0.85; 
-    let simulatedOutput = `Simulated output for command: ${interpolatedCommand}\n... success ...`;
+    let simulatedOutput = `Simulated output for command: ${interpolatedCommand}\n... processing ...`;
     let simulatedError;
+    let isSuccess = false;
 
     // Determine success rate and output based on command
-    if (cmdLower.includes('ssh ')) { // Added space to avoid matching 'sshUser' etc.
+    if (cmdLower.includes('ssh ')) {
         successRate = 0.9;
         if (Math.random() < successRate) {
-            simulatedOutput = `Successfully connected to ${serverInfo.host}:${serverInfo.sshPort} as ${serverInfo.sshUser}.`;
+            simulatedOutput = `Successfully connected to ${serverInfo.host}:${serverInfo.sshPort} as ${serverInfo.sshUser}.\nSSH Connected`;
         } else {
             simulatedOutput = `Failed to connect to ${serverInfo.host}:${serverInfo.sshPort}. Check credentials or network.`;
             simulatedError = 'Simulated SSH connection failure.';
@@ -121,31 +123,46 @@ async function simulateStepExecution(
         }
     } else if (cmdLower.includes('-xc')) { // Config validation
         successRate = 0.85;
+        const radiusdBinary = serverInfo.serverType === 'freeradius' ? 'freeradius' : 'radiusd';
+        const configDir = serverInfo.serverType === 'freeradius' ? '/etc/freeradius/3.0' : '/etc/raddb';
         if (Math.random() < successRate) {
-            simulatedOutput = 'Configuration check passed. Ready to start.';
+            simulatedOutput = `${radiusdBinary}: Configuration appears to be OK. Ready to start.`;
         } else {
-            simulatedOutput = `Configuration check failed. Errors found:\nERROR: Invalid syntax in /etc/${serverInfo.serverType === 'freeradius' ? 'freeradius/3.0' : 'raddb'}/sites-enabled/default\n...`;
+            simulatedOutput = `${radiusdBinary}: Checking configuration files...\nERROR: Invalid syntax in ${configDir}/sites-enabled/default\n...`;
             simulatedError = 'Simulated RADIUS configuration errors.';
         }
     } else if (cmdLower.includes('systemctl status') || cmdLower.includes('service status')) {
         successRate = 0.9;
         const serviceName = interpolatedCommand.split(' ').pop() || (serverInfo.serverType === 'freeradius' ? 'freeradius' : 'radiusd');
         if (Math.random() < successRate) {
-            simulatedOutput = `${serviceName} service is active (running).`;
+            simulatedOutput = `● ${serviceName}.service - FreeRADIUS multi-protocol policy server\n   Loaded: loaded (/lib/systemd/system/${serviceName}.service; enabled; vendor preset: enabled)\n   Active: active (running) since Mon 2024-01-01 12:00:00 UTC; 1 day ago`;
         } else {
-            simulatedOutput = `${serviceName} service is inactive (dead).`;
+            simulatedOutput = `● ${serviceName}.service - FreeRADIUS multi-protocol policy server\n   Loaded: loaded (/lib/systemd/system/${serviceName}.service; enabled; vendor preset: enabled)\n   Active: inactive (dead)`;
             simulatedError = `Simulated: ${serviceName} service not running.`;
         }
-    } else { // Custom command
+    } else { // Custom command or other default command not specifically handled above
         simulatedOutput = `Simulating custom command: ${interpolatedCommand}\nCustom script output example... Operation completed.`;
-        // For custom, we rely on the default successRate or specific error simulation
+        // For custom, we rely on the default successRate or specific error simulation, then check expectedOutputContains
         if (Math.random() >= successRate) {
             simulatedError = `Simulated error for custom command: ${interpolatedCommand}`;
-            simulatedOutput = `Simulated failure for custom command: ${interpolatedCommand}\nError: Something went wrong.`;
+            simulatedOutput = `Simulated failure for custom command: ${interpolatedCommand}\nError: Something went wrong during execution.`;
         }
     }
     
-    const isSuccess = !simulatedError; // Success if no error was explicitly simulated
+    // Determine success based on expectedOutputContains if provided, otherwise by lack of simulatedError
+    if (stepConfig.expectedOutputContains) {
+        if (!simulatedError && simulatedOutput.includes(stepConfig.expectedOutputContains)) {
+            isSuccess = true;
+        } else {
+            isSuccess = false;
+            if (!simulatedError) { // If no explicit error was simulated but expected output is missing
+                 simulatedError = `Expected output substring "${stepConfig.expectedOutputContains}" not found in simulated output.`;
+                 simulatedOutput += `\n[INFO] Expected output check failed.`;
+            }
+        }
+    } else { // Fallback to original logic if no expectedOutputContains is given
+        isSuccess = !simulatedError;
+    }
 
     return {
         stepName: stepConfig.name,
@@ -163,7 +180,7 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
   let criticalFailureEncountered = false;
 
   for (const stepConfig of input.stepsToExecute) {
-    if (criticalFailureEncountered) { 
+    if (criticalFailureEncountered && stepConfig.isMandatory) { 
         results.push({
             stepName: stepConfig.name,
             status: 'skipped',
@@ -182,26 +199,31 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
   }
   
   const hasAnyFailure = results.some(r => r.status === 'failure');
-  const hasMandatoryFailure = results.some((r, i) => r.status === 'failure' && input.stepsToExecute[i].isMandatory);
+  const allEnabledStepsSucceededOrSkipped = results.filter(r => input.stepsToExecute.find(s => s.name === r.stepName)?.isEnabled)
+                                               .every(r => r.status === 'success' || r.status === 'skipped');
+  const hasMandatorySuccess = results.some((r,i) => r.status === 'success' && input.stepsToExecute[i].isMandatory);
   
-  if (hasMandatoryFailure) {
+  if (criticalFailureEncountered) {
     overallStatus = 'failure';
   } else if (hasAnyFailure) {
-    overallStatus = 'partial';
-  } else if (results.every(r => r.status === 'success' || r.status === 'skipped')) {
-     if (results.some(r => r.status === 'success')) {
-        overallStatus = 'success';
-     } else { // All skipped, no successes
-        overallStatus = 'partial'; // Or a new status like 'all_skipped' if needed
-     }
+    overallStatus = 'partial'; // Some non-mandatory steps failed
+  } else if (allEnabledStepsSucceededOrSkipped && hasMandatorySuccess) {
+    overallStatus = 'success'; // All enabled steps (including mandatory ones) passed or were skipped (if not mandatory)
+  } else if (results.every(r => r.status === 'skipped')) {
+    overallStatus = 'partial'; // Or perhaps 'unknown' or 'not_tested' if all were skipped
   } else {
-    overallStatus = 'success'; // Should be covered by above, but as a fallback
+     overallStatus = 'success'; // Default if no failures and not all skipped
   }
   
-  // Override if the very first step (typically SSH) failed and was mandatory
-  if (input.stepsToExecute.length > 0 && input.stepsToExecute[0].isMandatory && results.length > 0 && results[0].status === 'failure') {
-      if (results[0].stepName.toLowerCase().includes('ssh')) {
-          overallStatus = 'failure'; // SSH failure is critical
+  // Check if any actual work was done
+  const successfulSteps = results.filter(r => r.status === 'success');
+  if (successfulSteps.length === 0 && !results.some(r => r.status === 'failure')) {
+      // All steps were skipped, or no steps were enabled.
+      if(results.length > 0 && results.every(r => r.status === 'skipped')) {
+         overallStatus = 'partial'; // All steps were skipped
+      } else {
+         // No steps or no enabled steps, perhaps mark differently if needed
+         overallStatus = 'partial'; 
       }
   }
 
@@ -210,6 +232,7 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
 }
 
 
+// Internal flow definition - not exported
 const testServerConnectionInternalFlow = ai.defineFlow(
   {
     name: 'testServerConnectionInternalFlow', 
@@ -217,8 +240,11 @@ const testServerConnectionInternalFlow = ai.defineFlow(
     outputSchema: TestServerConnectionOutputSchema,
   },
   async (input) => {
+    // Call the exported async function directly for simulation
     return testServerConnection(input);
   }
 );
 // The actual `testServerConnection` async function is exported and used by the UI.
-// Schemas (ClientTestStepSchema, etc.) are defined but not exported from this 'use server' file.
+// Schemas (ClientTestStepSchema, etc.) are defined but not directly exported from this 'use server' file.
+// Only types (ClientTestStep, TestServerConnectionInput, TestServerConnectionOutput) are exported alongside the main function.
+

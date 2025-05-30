@@ -28,15 +28,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { testServerConnection, TestServerConnectionInput, TestServerConnectionOutput } from '@/ai/flows/test-server-connection-flow';
+import { testServerConnection, TestServerConnectionInput, TestServerConnectionOutput, ClientTestStep } from '@/ai/flows/test-server-connection-flow';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 
-// Renamed for clarity from Genkit flow output
 type TestStepResult = TestServerConnectionOutput['steps'][0];
-
 
 type ServerStatus = 'connected' | 'disconnected' | 'unknown' | 'testing' | 'error_ssh' | 'error_config' | 'error_service' | 'issues_found';
 
@@ -46,7 +44,8 @@ interface TestStepConfig {
   command: string;
   isEnabled: boolean;
   isMandatory: boolean;
-  type: 'default' | 'custom'; // For potential future differentiation
+  type: 'default' | 'custom';
+  expectedOutputContains?: string; // New field
 }
 
 interface ServerConfig {
@@ -68,11 +67,11 @@ interface ServerConfig {
 }
 
 const getDefaultTestSteps = (): TestStepConfig[] => [
-  { id: 'step_ssh', name: 'SSH Connection Attempt', command: 'ssh ${sshUser}@${host} -p ${sshPort}', isEnabled: true, isMandatory: true, type: 'default' },
-  { id: 'step_radclient', name: 'Check for radclient', command: 'which radclient', isEnabled: true, isMandatory: false, type: 'default' },
-  { id: 'step_radtest', name: 'Check for radtest', command: 'which radtest', isEnabled: true, isMandatory: false, type: 'default' },
-  { id: 'step_config_val', name: 'Validate RADIUS Config', command: '${serverType === "freeradius" ? "freeradius" : "radiusd"} -XC', isEnabled: true, isMandatory: true, type: 'default' },
-  { id: 'step_service_status', name: 'Check RADIUS Service Status', command: 'systemctl status ${serverType === "freeradius" ? "freeradius" : "radiusd"}', isEnabled: true, isMandatory: true, type: 'default' },
+  { id: 'step_ssh', name: 'SSH Connection Attempt', command: 'ssh ${sshUser}@${host} -p ${sshPort} "echo SSH Connected"', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "SSH Connected" },
+  { id: 'step_radclient', name: 'Check for radclient', command: 'which radclient', isEnabled: true, isMandatory: false, type: 'default', expectedOutputContains: "/radclient" },
+  { id: 'step_radtest', name: 'Check for radtest', command: 'which radtest', isEnabled: true, isMandatory: false, type: 'default', expectedOutputContains: "/radtest" },
+  { id: 'step_config_val', name: 'Validate RADIUS Config', command: '${serverType === "freeradius" ? "freeradius" : "radiusd"} -XC', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "Configuration appears to be OK" },
+  { id: 'step_service_status', name: 'Check RADIUS Service Status', command: 'systemctl status ${serverType === "freeradius" ? "freeradius" : "radiusd"}', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "active (running)" },
 ];
 
 
@@ -163,7 +162,12 @@ export default function ServerConfigPage() {
   const handleTestStepChange = (index: number, field: keyof TestStepConfig, value: any) => {
     if (editingConfig) {
       const updatedTestSteps = [...editingConfig.testSteps];
-      (updatedTestSteps[index] as any)[field] = value;
+      // Ensure type safety for boolean fields
+      if (field === 'isEnabled' || field === 'isMandatory') {
+        (updatedTestSteps[index] as any)[field] = Boolean(value);
+      } else {
+        (updatedTestSteps[index] as any)[field] = value;
+      }
       setEditingConfig({ ...editingConfig, testSteps: updatedTestSteps });
     }
   };
@@ -177,6 +181,7 @@ export default function ServerConfigPage() {
         isEnabled: true,
         isMandatory: false,
         type: 'custom',
+        expectedOutputContains: '',
       };
       setEditingConfig({ ...editingConfig, testSteps: [...editingConfig.testSteps, newStep] });
     }
@@ -197,6 +202,15 @@ export default function ServerConfigPage() {
     setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'testing' } : c));
 
     try {
+      const stepsToExecuteClient: ClientTestStep[] = configToTest.testSteps.map(s => ({ 
+          name: s.name,
+          command: s.command,
+          isEnabled: s.isEnabled,
+          isMandatory: s.isMandatory, 
+          type: s.type,
+          expectedOutputContains: s.expectedOutputContains || undefined, // Ensure it's passed as undefined if empty
+      }));
+
       const input: TestServerConnectionInput = {
         id: configToTest.id,
         host: configToTest.host,
@@ -206,13 +220,7 @@ export default function ServerConfigPage() {
         privateKey: configToTest.privateKey,
         password: configToTest.password,
         serverType: configToTest.type,
-        stepsToExecute: configToTest.testSteps.map(s => ({ 
-            name: s.name,
-            command: s.command,
-            isEnabled: s.isEnabled,
-            isMandatory: s.isMandatory, 
-            type: s.type
-        })),
+        stepsToExecute: stepsToExecuteClient,
       };
       const result = await testServerConnection(input);
       setTestConnectionResult(result);
@@ -320,7 +328,7 @@ export default function ServerConfigPage() {
 
       {/* Server Config Editor Dialog */}
       <Dialog open={!!editingConfig} onOpenChange={(isOpen) => !isOpen && handleEditConfig(null)}>
-        <DialogContent className="max-w-3xl"> {/* Increased width */}
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
                 <ServerIcon className="h-6 w-6 text-primary" />
@@ -331,8 +339,8 @@ export default function ServerConfigPage() {
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
-            <ScrollArea className="max-h-[70vh] pr-2 -mr-6 pl-1"> {/* Adjusted padding for scrollbar */}
-            <div className="space-y-6 py-4 pr-4"> {/* Added pr-4 to content for spacing from scrollbar */}
+            <ScrollArea className="max-h-[70vh] pr-2 -mr-6 pl-1"> 
+            <div className="space-y-6 py-4 pr-4"> 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="server-name">Configuration Name</Label>
@@ -361,7 +369,7 @@ export default function ServerConfigPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="ssh-port">SSH Port</Label>
-                        <Input id="ssh-port" type="number" value={editingConfig.sshPort} onChange={(e) => setEditingConfig({ ...editingConfig, sshPort: parseInt(e.target.value) })} />
+                        <Input id="ssh-port" type="number" value={editingConfig.sshPort} onChange={(e) => setEditingConfig({ ...editingConfig, sshPort: parseInt(e.target.value) || 22 })} />
                     </div>
                     <div>
                         <Label htmlFor="ssh-user">SSH Username</Label>
@@ -396,11 +404,11 @@ export default function ServerConfigPage() {
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="radius-auth-port">RADIUS Auth Port</Label>
-                        <Input id="radius-auth-port" type="number" value={editingConfig.radiusAuthPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAuthPort: parseInt(e.target.value) })} />
+                        <Input id="radius-auth-port" type="number" value={editingConfig.radiusAuthPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAuthPort: parseInt(e.target.value) || 1812 })} />
                     </div>
                     <div>
                         <Label htmlFor="radius-acct-port">RADIUS Acct Port</Label>
-                        <Input id="radius-acct-port" type="number" value={editingConfig.radiusAcctPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAcctPort: parseInt(e.target.value) })} />
+                        <Input id="radius-acct-port" type="number" value={editingConfig.radiusAcctPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAcctPort: parseInt(e.target.value) || 1813 })} />
                     </div>
                 </div>
                 <div className="mt-4">
@@ -471,14 +479,27 @@ export default function ServerConfigPage() {
                                     id={`step-cmd-${index}`}
                                     value={step.command} 
                                     onChange={(e) => handleTestStepChange(index, 'command', e.target.value)} 
-                                    rows={2} 
+                                    rows={1} 
                                     className="font-mono text-xs mt-1"
-                                    placeholder="e.g., which radclient or ./my_custom_check.sh"
+                                    placeholder="e.g., which radclient"
+                                />
+                            </div>
+                             <div className="mt-2">
+                                <Label htmlFor={`step-expect-${index}`} className="text-xs text-muted-foreground">Expected Output Contains (Optional)</Label>
+                                <Input
+                                    id={`step-expect-${index}`}
+                                    value={step.expectedOutputContains || ''}
+                                    onChange={(e) => handleTestStepChange(index, 'expectedOutputContains', e.target.value)}
+                                    className="font-mono text-xs mt-1"
+                                    placeholder="e.g., 'active (running)' or '/usr/bin/radclient'"
                                 />
                                 <p className="text-xs text-muted-foreground mt-1">
-                                    Placeholders: `${"${host}"}`, `${"${sshUser}"}`, `${"${sshPort}"}`, `${"${serverType}"}`.
+                                    If provided, step succeeds if simulated output includes this text. Otherwise, AI decides.
                                 </p>
                             </div>
+                            <p className="text-xs text-muted-foreground mt-2">
+                                Use placeholders: `${"${host}"}`, `${"${sshUser}"}`, `${"${sshPort}"}`, `${"${serverType}"}` in commands.
+                            </p>
                         </Card>
                     ))}
                   </div>
@@ -574,3 +595,4 @@ export default function ServerConfigPage() {
     </div>
   );
 }
+
