@@ -113,9 +113,9 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   // Dictionaries Table (for metadata and example attributes)
   await db.exec(`
     CREATE TABLE IF NOT EXISTS dictionaries (
-      id TEXT PRIMARY KEY,    -- e.g., 'std', '3gpp', 'custom-acme_corp'
-      name TEXT NOT NULL,     -- e.g., 'Standard RADIUS', '3GPP VSAs', 'ACME Corp Custom'
-      source TEXT,            -- e.g., 'Standard', '3GPP', 'Custom Upload'
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      source TEXT,
       isActive BOOLEAN DEFAULT TRUE,
       lastUpdated TEXT,       -- Store as ISO8601 string
       exampleAttributes TEXT  -- Store as JSON string of example Attribute objects
@@ -148,9 +148,10 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       startTime TEXT NOT NULL,    -- ISO8601 string
       endTime TEXT,             -- ISO8601 string, nullable
       status TEXT NOT NULL,       -- 'Running', 'Completed', 'Failed', 'Aborted'
-      resultId TEXT             -- Nullable, could link to test_results.id
-      -- FOREIGN KEY (scenarioId) REFERENCES scenarios(id), -- Consider adding if strict FKs are desired
-      -- FOREIGN KEY (serverId) REFERENCES server_configs(id)
+      resultId TEXT,             -- Nullable, could link to test_results.id
+      FOREIGN KEY (scenarioId) REFERENCES scenarios(id) ON DELETE SET NULL, 
+      FOREIGN KEY (serverId) REFERENCES server_configs(id) ON DELETE SET NULL,
+      FOREIGN KEY (resultId) REFERENCES test_results(id) ON DELETE SET NULL
     );
   `);
   console.log('Test Executions table checked/created.');
@@ -163,8 +164,8 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       timestamp TEXT NOT NULL,    -- ISO8601 string
       level TEXT NOT NULL,        -- 'INFO', 'ERROR', 'SSH_CMD', etc.
       message TEXT NOT NULL,
-      rawDetails TEXT             -- JSON string for raw packets, command output, etc.
-      -- FOREIGN KEY (testExecutionId) REFERENCES test_executions(id) -- Consider adding
+      rawDetails TEXT,             -- JSON string for raw packets, command output, etc.
+      FOREIGN KEY (testExecutionId) REFERENCES test_executions(id) ON DELETE CASCADE
     );
   `);
   console.log('Execution Logs table checked/created.');
