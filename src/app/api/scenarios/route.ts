@@ -8,25 +8,32 @@ import { v4 as uuidv4 } from 'uuid';
 // GET all scenarios
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit') as string, 10) : undefined;
+  const limitParam = searchParams.get('limit');
+  const limit = limitParam ? parseInt(limitParam, 10) : undefined;
   const sortBy = searchParams.get('sortBy'); // e.g., 'lastModified'
-  const search = searchParams.get('search'); // New search parameter
+  const search = searchParams.get('search');
 
   try {
     const db = await getDb();
     let query = 'SELECT * FROM scenarios';
     const queryParams: any[] = [];
+    const whereClauses: string[] = [];
 
     if (search) {
-      query += ' WHERE (name LIKE ? OR description LIKE ?)';
-      queryParams.push(`%${search}%`, `%${search}%`);
+      whereClauses.push('(name LIKE ? OR description LIKE ? OR tags LIKE ?)');
+      queryParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    // Add other WHERE clauses here if needed in the future
+
+    if (whereClauses.length > 0) {
+      query += ' WHERE ' + whereClauses.join(' AND ');
     }
     
     if (sortBy === 'lastModified') {
       query += ' ORDER BY lastModified DESC';
     } else {
-      query += (search ? ' AND' : ' WHERE') + ' 1=1 ORDER BY name ASC'; // Ensure ORDER BY is always valid
-      if (search) query += ' ORDER BY name ASC'; else query += ' ORDER BY name ASC';
+      query += ' ORDER BY name ASC'; // Default sort
     }
 
     if (limit) {
@@ -36,7 +43,7 @@ export async function GET(request: NextRequest) {
 
     const scenariosFromDb = await db.all(query, ...queryParams);
     
-    const scenarios: Scenario[] = scenariosFromDb.map(s => ({
+    const scenarios: Scenario[] = scenariosFromDb.map((s: any) => ({
       ...s,
       variables: s.variables ? JSON.parse(s.variables as string) : [],
       steps: s.steps ? JSON.parse(s.steps as string) : [],
@@ -45,8 +52,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(scenarios);
   } catch (error) {
-    console.error('Failed to fetch scenarios:', error);
-    return NextResponse.json({ message: 'Failed to fetch scenarios', error: (error as Error).message }, { status: 500 });
+    console.error('Failed to fetch scenarios (API Error):', error instanceof Error ? error.stack : error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred in the API.';
+    return NextResponse.json({ message: 'API: Failed to fetch scenarios', error: errorMessage }, { status: 500 });
   }
 }
 
@@ -84,7 +92,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newScenario, { status: 201 });
   } catch (error) {
-    console.error('Failed to create scenario:', error);
-    return NextResponse.json({ message: 'Failed to create scenario', error: (error as Error).message }, { status: 500 });
+    console.error('Failed to create scenario (API Error):', error instanceof Error ? error.stack : error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+    return NextResponse.json({ message: 'Failed to create scenario', error: errorMessage }, { status: 500 });
   }
 }

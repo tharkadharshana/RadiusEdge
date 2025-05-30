@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation'; // Import useRouter
+import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import type { ServerConfig } from '@/app/settings/servers/page';
 import type { TestResult } from '@/app/results/page';
 import type { AiInteraction } from '@/app/api/ai-interactions/route';
 import { formatDistanceToNowStrict } from 'date-fns';
+import { useToast } from "@/hooks/use-toast";
 
 const featureCards = [
   { title: "Scenario Builder", description: "Design complex test flows.", icon: Waypoints, href: "/scenarios", actionText: "Open Builder" },
@@ -34,7 +35,8 @@ interface ActivityItem {
 }
 
 export default function DashboardPage() {
-  const router = useRouter(); // Initialize router
+  const router = useRouter();
+  const { toast } = useToast();
   const [scenarios, setScenarios] = useState<Pick<Scenario, 'id' | 'name'>[]>([]);
   const [servers, setServers] = useState<Pick<ServerConfig, 'id' | 'name'>[]>([]);
   const [isLoadingScenarios, setIsLoadingScenarios] = useState(true);
@@ -53,15 +55,22 @@ export default function DashboardPage() {
       setIsLoadingActivities(true);
 
       try {
-        const scenariosRes = await fetch('/api/scenarios?limit=3'); 
+        const scenariosRes = await fetch('/api/scenarios?limit=3&sortBy=lastModified'); 
         if (scenariosRes.ok) {
           const scenariosData: Scenario[] = await scenariosRes.json();
           setScenarios(scenariosData.map((s: Scenario) => ({ id: s.id, name: s.name })).slice(0, 3));
         } else {
-          console.error("Failed to fetch scenarios for dashboard");
+          let errorMsg = "Failed to fetch scenarios for dashboard";
+          try {
+            const errorData = await scenariosRes.json();
+            errorMsg = errorData.error || errorData.message || errorMsg;
+          } catch (e) { /* ignore parsing error */ }
+          console.error(errorMsg);
+          toast({ title: "Dashboard Error", description: "Could not load recent scenarios.", variant: "destructive"});
         }
       } catch (error) {
         console.error("Error fetching scenarios:", error);
+        toast({ title: "Dashboard Error", description: "Could not load recent scenarios.", variant: "destructive"});
       } finally {
         setIsLoadingScenarios(false);
       }
@@ -72,10 +81,17 @@ export default function DashboardPage() {
           const serversData: ServerConfig[] = await serversRes.json();
           setServers(serversData.map((s: ServerConfig) => ({ id: s.id, name: s.name })));
         } else {
-          console.error("Failed to fetch servers for dashboard");
+          let errorMsg = "Failed to fetch servers for dashboard";
+          try {
+            const errorData = await serversRes.json();
+            errorMsg = errorData.error || errorData.message || errorMsg;
+          } catch (e) { /* ignore parsing error */ }
+          console.error(errorMsg);
+          toast({ title: "Dashboard Error", description: "Could not load server list.", variant: "destructive"});
         }
       } catch (error) {
         console.error("Error fetching servers:", error);
+        toast({ title: "Dashboard Error", description: "Could not load server list.", variant: "destructive"});
       } finally {
         setIsLoadingServers(false);
       }
@@ -97,7 +113,8 @@ export default function DashboardPage() {
               href: `/results#result-${r.id}` 
             });
           });
-        }
+        } else { console.error("Failed to fetch recent test results for dashboard activity."); }
+
 
         const aiInteractionsRes = await fetch('/api/ai-interactions?limit=2');
         if (aiInteractionsRes.ok) {
@@ -123,7 +140,7 @@ export default function DashboardPage() {
               href: `/ai-assistant#interaction-${ai.id}` 
             });
           });
-        }
+        } else { console.error("Failed to fetch recent AI interactions for dashboard activity."); }
         
         const scenariosActivityRes = await fetch('/api/scenarios?limit=1&sortBy=lastModified'); 
         if (scenariosActivityRes.ok) {
@@ -140,18 +157,21 @@ export default function DashboardPage() {
                     href: `/scenarios#scenario-${s.id}` 
                 });
             }
-        }
+        } else { console.error("Failed to fetch recent scenario updates for dashboard activity."); }
+
 
         activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
         setRecentActivities(activities.slice(0, 4)); 
 
       } catch (error) {
         console.error("Error fetching recent activities:", error);
+        toast({ title: "Dashboard Error", description: "Could not load recent activities.", variant: "destructive"});
       } finally {
         setIsLoadingActivities(false);
       }
     };
     fetchDashboardData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleServerSelect = (serverId: string) => {
@@ -167,8 +187,10 @@ export default function DashboardPage() {
 
   const handleRunSmokeTest = () => {
     if (selectedServerId && selectedServerName) {
-      const scenarioName = "SMOKE_TEST_SCENARIO"; // Predefined scenario name
+      const scenarioName = "SMOKE_TEST_SCENARIO";
       router.push(`/execute?scenario=${encodeURIComponent(scenarioName)}&serverId=${selectedServerId}&serverName=${encodeURIComponent(selectedServerName)}`);
+    } else {
+      toast({ title: "Select Server", description: "Please select a server to run the smoke test.", variant: "default" });
     }
   };
 
@@ -239,7 +261,7 @@ export default function DashboardPage() {
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                  </div>
               ) : (
-                <Select onValueChange={handleServerSelect} value={selectedServerId || ""}>
+                <Select onValueChange={handleServerSelect} value={selectedServerId || undefined}>
                     <SelectTrigger id="server-select">
                     <SelectValue placeholder="Choose a server..." />
                     </SelectTrigger>
