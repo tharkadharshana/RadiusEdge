@@ -53,6 +53,7 @@ interface SshExecutionStep {
   name: string;
   command: string;
   isEnabled: boolean;
+  expectedOutputContains?: string; // Added field
 }
 
 interface ServerConfig {
@@ -83,8 +84,8 @@ const getDefaultTestSteps = (): TestStepConfig[] => [
 ];
 
 const getDefaultScenarioSshPreamble = (): SshExecutionStep[] => [
-    { id: 'ssh_preamble_1', name: 'Example: Connect to Jump Host', command: 'ssh user@jump.example.com', isEnabled: false },
-    { id: 'ssh_preamble_2', name: 'Example: SSH to Target from Jump', command: 'ssh admin@${host}', isEnabled: false },
+    { id: 'ssh_preamble_1', name: 'Example: Connect to Jump Host', command: 'ssh user@jump.example.com', isEnabled: false, expectedOutputContains: "Connected to jump.example.com" },
+    { id: 'ssh_preamble_2', name: 'Example: SSH to Target from Jump', command: 'ssh admin@${host}', isEnabled: false, expectedOutputContains: "Connected to admin@${host}" },
 ];
 
 
@@ -226,6 +227,7 @@ export default function ServerConfigPage() {
         name: 'New SSH Preamble Step',
         command: '',
         isEnabled: true,
+        expectedOutputContains: '',
       };
       setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: [...editingConfig.scenarioExecutionSshCommands, newStep] });
     }
@@ -447,6 +449,7 @@ export default function ServerConfigPage() {
                   </Label>
                   <p className="text-xs text-muted-foreground mt-1 mb-3">
                     Define SSH commands (e.g., for jump hosts) that would (simulatively) run before RADIUS scenarios. RadiusEdge does NOT execute live SSH.
+                    If 'Expected Output Contains' is set, the step must produce that output for the preamble to continue.
                   </p>
                   <div className="space-y-3">
                     {(editingConfig.scenarioExecutionSshCommands || []).map((step, index) => (
@@ -483,6 +486,16 @@ export default function ServerConfigPage() {
                             className="font-mono text-xs mt-1"
                             placeholder="e.g., ssh user@jump.server.com"
                           />
+                        </div>
+                        <div className="mt-2">
+                            <Label htmlFor={`ssh-preamble-expect-${index}`} className="text-xs text-muted-foreground">Expected Output Contains (Optional)</Label>
+                            <Input
+                                id={`ssh-preamble-expect-${index}`}
+                                value={step.expectedOutputContains || ''}
+                                onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)}
+                                className="font-mono text-xs mt-1"
+                                placeholder="e.g., 'Connection established' or 'Login successful'"
+                            />
                         </div>
                       </Card>
                     ))}
@@ -689,6 +702,3 @@ export default function ServerConfigPage() {
     </div>
   );
 }
-
-
-    
