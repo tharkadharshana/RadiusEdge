@@ -118,16 +118,23 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       source TEXT,            -- e.g., 'Standard', '3GPP', 'Custom Upload'
       isActive BOOLEAN DEFAULT TRUE,
       lastUpdated TEXT        -- Store as ISO8601 string
-      -- attributesCount INTEGER, -- Optional: if we decide to store counts later
-      -- vendorCodesCount INTEGER -- Optional: if we decide to store counts later
     );
   `);
   console.log('Dictionaries table checked/created.');
 
-  // You can add more table creations here as we build out the backend
-  // For example:
-  // CREATE TABLE IF NOT EXISTS execution_results (...)
-  // CREATE TABLE IF NOT EXISTS execution_logs (...)
+  // Test Results Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS test_results (
+      id TEXT PRIMARY KEY,
+      scenarioName TEXT NOT NULL,
+      status TEXT NOT NULL, -- 'Pass', 'Fail', 'Warning'
+      timestamp TEXT NOT NULL, -- ISO8601 string
+      latencyMs INTEGER,
+      server TEXT,
+      details TEXT -- JSON string for logs, SQL results, etc.
+    );
+  `);
+  console.log('Test Results table checked/created.');
 
   console.log('Database schema initialization complete.');
 }
