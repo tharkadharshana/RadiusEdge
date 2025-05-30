@@ -162,7 +162,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       id TEXT PRIMARY KEY,
       testExecutionId TEXT NOT NULL,
       timestamp TEXT NOT NULL,    -- ISO8601 string
-      level TEXT NOT NULL,        -- 'INFO', 'ERROR', 'SSH_CMD', etc.
+      level TEXT NOT NULL,        -- 'INFO', 'ERROR', 'SSH_CMD', 'SSH_OUT', 'SENT', 'RECV'
       message TEXT NOT NULL,
       rawDetails TEXT,             -- JSON string for raw packets, command output, etc.
       FOREIGN KEY (testExecutionId) REFERENCES test_executions(id) ON DELETE CASCADE
