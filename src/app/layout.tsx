@@ -33,7 +33,8 @@ export default function RootLayout({
           <SidebarProvider defaultOpen>
             <div className="flex min-h-screen w-full">
               <AppSidebar />
-              <div className="flex flex-1 flex-col">
+              {/* Added min-w-0 to ensure this flex container can shrink if its content is too wide */}
+              <div className="flex flex-1 flex-col min-w-0"> 
                 <AppHeader />
                 <main className="flex-1 overflow-y-auto p-6 bg-background">
                   {children}
