@@ -78,9 +78,27 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Server Configurations table checked/created.');
 
+  // Database Connection Configurations Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS db_configs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT, -- 'mysql', 'postgresql', etc.
+      host TEXT,
+      port INTEGER,
+      username TEXT,
+      password TEXT,
+      databaseName TEXT,
+      status TEXT, -- 'connected_validated', 'connection_error', etc.
+      sshPreambleSteps TEXT, -- Store as JSON string (array of DbSshPreambleStepConfig)
+      validationSteps TEXT   -- Store as JSON string (array of DbValidationStepConfig)
+    );
+  `);
+  console.log('Database Configurations table checked/created.');
+
+
   // You can add more table creations here as we build out the backend
   // For example:
-  // CREATE TABLE IF NOT EXISTS db_configs (...)
   // CREATE TABLE IF NOT EXISTS users (...)
   // CREATE TABLE IF NOT EXISTS execution_results (...)
   // CREATE TABLE IF NOT EXISTS execution_logs (...)
