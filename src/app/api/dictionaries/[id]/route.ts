@@ -51,7 +51,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
     const dictFromDb = await db.get('SELECT id, name, source, isActive, lastUpdated, exampleAttributes FROM dictionaries WHERE id = ?', params.id);
 
     if (!dictFromDb) {
-      return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
+      return NextResponse.json({ message: 'Dictionary not found', error: 'Dictionary not found' }, { status: 404 });
     }
     
     const exampleAttrs = parseJsonField(dictFromDb.exampleAttributes as string | null, []);
@@ -83,8 +83,8 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
     return NextResponse.json(dictionary);
   } catch (error: any) {
     console.error(`Failed to fetch dictionary ${params.id} (API Error):`, error.stack || error);
-    const errorMessage = error.message || 'An unknown error occurred in the API.';
-    return NextResponse.json({ message: `API: Failed to fetch dictionary ${params.id}`, error: errorMessage, errorDetails: error.stack }, { status: 500 });
+    const errorMessage = error.message || 'An unknown error occurred while fetching the dictionary.';
+    return NextResponse.json({ message: `API: Failed to fetch dictionary ${params.id}`, error: errorMessage }, { status: 500 });
   }
 }
 
@@ -103,7 +103,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const db = await getDb();
     const existingDict = await db.get('SELECT * FROM dictionaries WHERE id = ?', params.id);
     if (!existingDict) {
-      return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
+      return NextResponse.json({ message: 'Dictionary not found', error: 'Dictionary not found to update' }, { status: 404 });
     }
 
     let exampleAttributesForDb: string | undefined = undefined; 
@@ -123,7 +123,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
             name: attr.name, code: attr.code, type: attr.type,
             vendor: parsedResult.vendorName || attr.vendor || 'Unknown',
             description: attr.description || '',
-            enumValues: attr.enumValues?.map(ev => ev.name + ' (' + ev.value + ')') || [],
+            enumValues: attr.enumValues || [], // Ensure enumValues is an array
             examples: attr.examples || '',
           }));
         }
@@ -174,7 +174,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     
     const updatedDictAfterSave = await db.get('SELECT id, name, source, isActive, lastUpdated, exampleAttributes FROM dictionaries WHERE id = ?', params.id);
     if (!updatedDictAfterSave) { 
-        return NextResponse.json({ message: 'Failed to retrieve updated dictionary after save' }, { status: 500});
+        return NextResponse.json({ message: 'Failed to retrieve updated dictionary after save', error: 'Failed to retrieve updated dictionary' }, { status: 500});
     }
     
     const exampleAttrsRet = parseJsonField(updatedDictAfterSave.exampleAttributes as string | null, []);
@@ -204,8 +204,8 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     return NextResponse.json(dictionaryToReturn);
   } catch (error: any) {
     console.error(`Failed to update dictionary ${params.id} (API Error):`, error.stack || error);
-    const errorMessage = error.message || 'An unknown error occurred.';
-    return NextResponse.json({ message: `Failed to update dictionary ${params.id}`, error: errorMessage, errorDetails: error.stack }, { status: 500 });
+    const errorMessage = error.message || 'An unknown error occurred while updating the dictionary.';
+    return NextResponse.json({ message: `Failed to update dictionary ${params.id}`, error: errorMessage }, { status: 500 });
   }
 }
 
@@ -219,16 +219,14 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
 
     if (result.changes === 0) {
       console.warn(`API DELETE: Dictionary not found or no changes made for ID: ${params.id}`); // API Log
-      return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
+      return NextResponse.json({ message: 'Dictionary not found', error: 'Dictionary not found to delete' }, { status: 404 });
     }
     console.log(`API DELETE: Successfully deleted dictionary ID: ${params.id}`); // API Log
     return NextResponse.json({ message: 'Dictionary deleted successfully' }, { status: 200 });
   } catch (error: any) {
     console.error(`Failed to delete dictionary ${params.id} (API Error):`, error.stack || error);
-    const errorMessage = error.message || 'An unknown error occurred.';
-    return NextResponse.json({ message: `Failed to delete dictionary ${params.id}`, error: errorMessage, errorDetails: error.stack }, { status: 500 });
+    const errorMessage = error.message || 'An unknown error occurred while deleting the dictionary.';
+    return NextResponse.json({ message: `Failed to delete dictionary ${params.id}`, error: errorMessage }, { status: 500 });
   }
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
-
-    

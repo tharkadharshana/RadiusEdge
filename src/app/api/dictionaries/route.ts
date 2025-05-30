@@ -20,7 +20,14 @@ const parseJsonField = (jsonString: string | null | undefined, defaultValue: any
   }
   try {
     const parsed = JSON.parse(jsonString);
-    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
+    if (Array.isArray(parsed) && parsed.every(item => 
+        typeof item === 'object' && 
+        item !== null && 
+        typeof item.id === 'string' && // Ensure attributes have IDs
+        typeof item.name === 'string' && 
+        typeof item.code === 'string' && 
+        typeof item.type === 'string'
+    )) {
       return parsed as Attribute[];
     }
     console.warn('API: Parsed JSON field for attributes was not an array of valid Attribute objects. Input snippet:', jsonString.substring(0,100));
@@ -69,7 +76,8 @@ export async function GET() {
     return NextResponse.json(dictionaries);
   } catch (error: any) {
     console.error('API: Failed to fetch dictionaries (GET all). Error:', error.message, error.stack);
-    return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: error.message, errorDetails: error.stack }, { status: 500 });
+    const errorMessage = error.message || 'An unknown error occurred while fetching dictionaries.';
+    return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: errorMessage }, { status: 500 });
   }
 }
 
@@ -104,7 +112,7 @@ export async function POST(request: NextRequest) {
                 name: attr.name, code: attr.code, type: attr.type,
                 vendor: parsedResult.vendorName || attr.vendor || 'Unknown',
                 description: attr.description || '',
-                enumValues: attr.enumValues?.map(ev => ev.name + ' (' + ev.value + ')') || [],
+                enumValues: attr.enumValues || [], // Ensure enumValues is an array
                 examples: attr.examples || '',
               }));
             }
@@ -161,7 +169,7 @@ export async function POST(request: NextRequest) {
             name: attr.name, code: attr.code, type: attr.type,
             vendor: parsedResult.vendorName || attr.vendor || 'Unknown',
             description: attr.description || '',
-            enumValues: attr.enumValues?.map(ev => ev.name + ' (' + ev.value + ')') || [],
+            enumValues: attr.enumValues || [], // Ensure enumValues is an array
             examples: attr.examples || '',
           }));
         }
@@ -175,7 +183,7 @@ export async function POST(request: NextRequest) {
     }
     
     if (!dictName) { // If name is still not set (e.g. manual mode without name, or parsing failed to get vendor)
-      return NextResponse.json({ message: 'Dictionary name is required (either provided directly or parsable from content)' }, { status: 400 });
+      return NextResponse.json({ message: 'Dictionary name is required (either provided directly or parsable from content)', error: 'Dictionary name required' }, { status: 400 });
     }
     dictSource = dictSource || (body.rawContent ? "Parsed from Content" : "Manually Created");
     const id = `${dictName.toLowerCase().replace(/[^a-z0-9_]/gi, '_').substring(0,30)}_${uuidv4().substring(0,8)}`;
@@ -202,7 +210,8 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('API: Failed to create dictionary metadata (POST). Error:', error.message, error.stack);
-    return NextResponse.json({ message: 'Failed to create dictionary metadata', error: error.message, errorDetails: error.stack }, { status: 500 });
+    const errorMessage = error.message || 'An unknown error occurred while creating dictionary.';
+    return NextResponse.json({ message: 'Failed to create dictionary metadata', error: errorMessage }, { status: 500 });
   }
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
