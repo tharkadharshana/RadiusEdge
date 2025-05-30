@@ -12,7 +12,7 @@
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
-export const TestServerConnectionInputSchema = z.object({
+const TestServerConnectionInputSchema = z.object({
   id: z.string().describe("The ID of the server configuration being tested."),
   host: z.string().describe('The hostname or IP address of the server.'),
   sshPort: z.number().describe('The SSH port for the server.'),
@@ -33,7 +33,7 @@ const TestServerConnectionStepSchema = z.object({
 });
 export type TestServerConnectionStep = z.infer<typeof TestServerConnectionStepSchema>;
 
-export const TestServerConnectionOutputSchema = z.object({
+const TestServerConnectionOutputSchema = z.object({
   overallStatus: z.enum(['success', 'failure', 'partial', 'testing']).describe('The overall status of the connection test.'),
   steps: z.array(TestServerConnectionStepSchema).describe('A list of steps performed during the test and their outcomes.'),
 });
