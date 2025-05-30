@@ -31,21 +31,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
-import { ScrollArea } from '@/components/ui/scroll-area'; // Added for potentially long attribute lists
+import { ScrollArea } from '@/components/ui/scroll-area'; 
 
-export interface Dictionary {
-  id: string;
-  name: string;
-  source: string;
-  attributes: number; // This is a count derived from exampleAttributes by the API
-  vendorCodes: number; // This remains a mock count
-  isActive: boolean;
-  lastUpdated: string;
-  exampleAttributes?: Attribute[]; // Changed from string to Attribute[] for client-side
-}
-
-interface Attribute {
-  id: string; // Client-side ID for list rendering, backend might not store this if attributes are just an array
+export interface Attribute {
+  id: string; 
   name: string;
   code: string;
   type: string;
@@ -55,22 +44,32 @@ interface Attribute {
   examples?: string;
 }
 
+export interface Dictionary {
+  id: string;
+  name: string;
+  source: string;
+  attributes: number; 
+  vendorCodes: number; 
+  isActive: boolean;
+  lastUpdated: string;
+  exampleAttributes?: Attribute[]; 
+}
+
+
 export default function DictionariesPage() {
   const [dictionaries, setDictionaries] = useState<Dictionary[]>([]);
   const [selectedDictionary, setSelectedDictionary] = useState<Dictionary | null>(null);
-  const [selectedAttributeForDetailView, setSelectedAttributeForDetailView] = useState<Attribute | null>(null); // For existing detail view
+  const [selectedAttributeForDetailView, setSelectedAttributeForDetailView] = useState<Attribute | null>(null); 
   
-  // State for managing the list of example attributes being edited for selectedDictionary
   const [editingExampleAttributes, setEditingExampleAttributes] = useState<Attribute[]>([]);
   
-  // State for the "Add/Edit Attribute" sub-dialog
   const [isAttributeEditorOpen, setIsAttributeEditorOpen] = useState(false);
   const [currentAttributeToEdit, setCurrentAttributeToEdit] = useState<Partial<Attribute> & { isNew?: boolean } | null>(null);
-  const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null); // To track which attribute is being edited
+  const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null); 
 
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // For import/toggle/delete dictionary
-  const [isSavingAttributes, setIsSavingAttributes] = useState(false); // For saving example attributes
+  const [isSaving, setIsSaving] = useState(false); 
+  const [isSavingAttributes, setIsSavingAttributes] = useState(false); 
 
   const [newDictName, setNewDictName] = useState('');
   const [newDictSource, setNewDictSource] = useState('');
@@ -82,13 +81,28 @@ export default function DictionariesPage() {
     setIsLoading(true);
     try {
       const response = await fetch('/api/dictionaries');
-      if (!response.ok) throw new Error('Failed to fetch dictionaries');
+      if (!response.ok) {
+        let apiError = `Failed to fetch dictionaries. Status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          apiError = errorData.message || errorData.error || apiError;
+        } catch (e) {
+          // Response body was not JSON or error during parsing
+          const textError = await response.text();
+          apiError += `. Response: ${textError.substring(0, 150)}`;
+        }
+        throw new Error(apiError);
+      }
       const data = await response.json();
-      // API returns exampleAttributes as an array of objects already parsed from JSON string by the API GET routes
-      setDictionaries(data.map((d: any) => ({ ...d, attributes: d.exampleAttributes?.length || 0, vendorCodes: 0 })));
+      setDictionaries(data.map((d: any) => ({ 
+        ...d, 
+        attributes: d.exampleAttributes?.length || 0, 
+        vendorCodes: d.vendorCodes || 0, // Ensure vendorCodes has a default
+        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [] 
+      })));
     } catch (error) {
-      console.error("Error fetching dictionaries:", error);
-      toast({ title: "Error", description: (error as Error).message, variant: "destructive" });
+      console.error("Error fetching dictionaries (frontend catch):", error);
+      toast({ title: "Error Fetching Dictionaries", description: (error as Error).message, variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
@@ -101,6 +115,7 @@ export default function DictionariesPage() {
 
   const toggleDictionaryActive = async (id: string, currentStatus: boolean) => {
     setIsSaving(true);
+    // Optimistic UI update
     setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: !currentStatus } : dict));
     try {
       const response = await fetch(`/api/dictionaries/${id}`, {
@@ -113,11 +128,13 @@ export default function DictionariesPage() {
         throw new Error(errorData.message || 'Failed to update dictionary status');
       }
       const updatedDict = await response.json();
+      // Update with confirmed data from backend
       setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? { ...updatedDict, attributes: updatedDict.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes } : d));
       toast({ title: "Success", description: `Dictionary "${updatedDict.name}" status updated.` });
     } catch (error) {
       console.error("Error toggling dictionary status:", error);
       toast({ title: "Update Failed", description: (error as Error).message, variant: "destructive" });
+      // Revert optimistic update on error
       setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict));
     } finally {
       setIsSaving(false);
@@ -175,20 +192,17 @@ export default function DictionariesPage() {
 
   const handleViewDictionary = (dictionary: Dictionary) => {
     setSelectedDictionary(dictionary);
-    // API now returns exampleAttributes as an array of objects.
-    // Ensure it's an array, provide default empty if not.
     const attributesArray = Array.isArray(dictionary.exampleAttributes) ? dictionary.exampleAttributes : [];
-    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); // Deep copy for editing
+    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); 
   };
   
   const handleViewAttributeDetail = (attribute: Attribute) => {
     setSelectedAttributeForDetailView(attribute);
   };
 
-  // Handlers for Add/Edit Example Attribute sub-dialog
   const openAttributeEditor = (attribute?: Attribute, index?: number) => {
     setCurrentAttributeToEdit(attribute ? { ...attribute } : { id: `client_attr_${Date.now()}`, name: '', code: '', type: '', vendor: selectedDictionary?.name || 'Standard', description: '', examples: '', isNew: !attribute });
-    setAttributeEditIndex(attribute ? index! : null); // Use index for editing existing
+    setAttributeEditIndex(attribute ? index! : null); 
     setIsAttributeEditorOpen(true);
   };
 
@@ -197,9 +211,9 @@ export default function DictionariesPage() {
 
     setEditingExampleAttributes(prev => {
       const newAttributes = [...prev];
-      if (attributeEditIndex !== null && !currentAttributeToEdit.isNew) { // Editing existing
+      if (attributeEditIndex !== null && !currentAttributeToEdit.isNew) { 
         newAttributes[attributeEditIndex] = currentAttributeToEdit as Attribute;
-      } else { // Adding new
+      } else { 
         newAttributes.push(currentAttributeToEdit as Attribute);
       }
       return newAttributes;
@@ -220,7 +234,7 @@ export default function DictionariesPage() {
       const response = await fetch(`/api/dictionaries/${selectedDictionary.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), // API expects JSON array (stringified)
+        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), 
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -228,7 +242,7 @@ export default function DictionariesPage() {
       }
       const updatedDictionary = await response.json();
       setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? { ...updatedDictionary, attributes: updatedDictionary.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes } : d));
-      setSelectedDictionary(null); // Close main dialog
+      setSelectedDictionary(null); 
       toast({ title: "Attributes Saved", description: `Example attributes for "${updatedDictionary.name}" updated.` });
     } catch (error) {
       console.error("Error saving attributes:", error);
@@ -466,4 +480,6 @@ export default function DictionariesPage() {
     </div>
   );
 }
+    
+
     
