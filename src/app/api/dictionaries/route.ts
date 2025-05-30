@@ -20,7 +20,6 @@ const parseJsonField = (jsonString: string | null | undefined, defaultValue: any
   }
   try {
     const parsed = JSON.parse(jsonString);
-    // Basic validation: ensure it's an array and items have some expected structure
     if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
       return parsed as Attribute[];
     }
@@ -70,7 +69,7 @@ export async function GET() {
     return NextResponse.json(dictionaries);
   } catch (error: any) {
     console.error('API: Failed to fetch dictionaries (GET all). Error:', error.message, error.stack);
-    return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: error.message, error: error.stack }, { status: 500 });
+    return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: error.message, errorDetails: error.stack }, { status: 500 });
   }
 }
 
@@ -78,8 +77,8 @@ export async function GET() {
 interface PostRequestBody {
   name?: string;
   source?: string;
-  rawContent?: string; // For pasted or uploaded dictionary file content
-  files?: { name: string; content: string }[]; // For bulk file upload (metadata only initially)
+  rawContent?: string; 
+  files?: { name: string; content: string }[]; 
 }
 
 export async function POST(request: NextRequest) {
@@ -88,19 +87,45 @@ export async function POST(request: NextRequest) {
     const db = await getDb();
     const createdDictionaries: Dictionary[] = [];
 
-    // Handle bulk file import (metadata only)
-    if (body.files && body.files.length > 0) {
+    if (body.files && body.files.length > 0) { // Handle bulk file import
       for (const file of body.files) {
-        const fileNameWithoutExt = file.name.split('.').slice(0, -1).join('.') || file.name;
-        const dictName = fileNameWithoutExt;
-        const dictSource = "Uploaded File";
-        const id = `${dictName.toLowerCase().replace(/[^a-z0-9_]/gi, '_').substring(0,30)}_${uuidv4().substring(0,8)}`;
-        const exampleAttributesArray: Attribute[] = []; // No parsing for bulk
+        let dictNameFromFile = file.name.split('.').slice(0, -1).join('.') || file.name;
+        let dictSourceFromFile = "Uploaded File";
+        let exampleAttributesArray: Attribute[] = [];
+        let vendorInfo: { vendorName?: string; vendorId?: string } = {};
 
+        if (file.content && file.content.trim() !== '') {
+          try {
+            console.log(`API: Bulk import - parsing content for file ${file.name}...`);
+            const parsedResult = await parseDictionaryFileContent({ dictionaryContent: file.content });
+            if (parsedResult.attributes) {
+              exampleAttributesArray = parsedResult.attributes.map(attr => ({
+                id: attr.id || uuidv4(), 
+                name: attr.name, code: attr.code, type: attr.type,
+                vendor: parsedResult.vendorName || attr.vendor || 'Unknown',
+                description: attr.description || '',
+                enumValues: attr.enumValues?.map(ev => ev.name + ' (' + ev.value + ')') || [],
+                examples: attr.examples || '',
+              }));
+            }
+            vendorInfo = { vendorName: parsedResult.vendorName, vendorId: parsedResult.vendorId };
+            if (vendorInfo.vendorName) { // Prioritize parsed vendor name
+                dictNameFromFile = vendorInfo.vendorName;
+                dictSourceFromFile = vendorInfo.vendorName;
+            }
+            console.log(`API: Bulk parsing for ${file.name} complete. Vendor: ${vendorInfo.vendorName}, Attributes: ${exampleAttributesArray.length}`);
+          } catch (parseError: any) {
+            console.warn(`API: AI parsing of dictionary content failed during bulk POST for file ${file.name}:`, parseError.message);
+          }
+        } else {
+            console.log(`API: Bulk import - file ${file.name} has no content, creating metadata only.`);
+        }
+        
+        const id = `${dictNameFromFile.toLowerCase().replace(/[^a-z0-9_]/gi, '_').substring(0,30)}_${uuidv4().substring(0,8)}`;
         const newDictionaryMetadata = {
           id,
-          name: dictName,
-          source: dictSource,
+          name: dictNameFromFile,
+          source: dictSourceFromFile,
           isActive: true,
           lastUpdated: new Date().toISOString(),
           exampleAttributes: JSON.stringify(exampleAttributesArray),
@@ -112,13 +137,15 @@ export async function POST(request: NextRequest) {
         );
         createdDictionaries.push({
           ...newDictionaryMetadata,
-          attributes: 0, vendorCodes: 0, exampleAttributes: []
+          attributes: exampleAttributesArray.length, 
+          vendorCodes: vendorInfo.vendorId ? 1 : 0, 
+          exampleAttributes: exampleAttributesArray
         });
       }
       return NextResponse.json(createdDictionaries, { status: 201 });
     }
 
-    // Handle single dictionary import (with potential content parsing)
+    // Handle single dictionary import (manual, paste, or single file upload with content)
     let dictName = body.name;
     let dictSource = body.source;
     let exampleAttributesArray: Attribute[] = [];
@@ -126,7 +153,7 @@ export async function POST(request: NextRequest) {
 
     if (body.rawContent) {
       try {
-        console.log("API: Received rawContent, attempting to parse with AI flow...");
+        console.log("API: Single import - Received rawContent, attempting to parse with AI flow...");
         const parsedResult = await parseDictionaryFileContent({ dictionaryContent: body.rawContent });
         if (parsedResult.attributes) {
           exampleAttributesArray = parsedResult.attributes.map(attr => ({
@@ -140,14 +167,14 @@ export async function POST(request: NextRequest) {
         }
         vendorInfo = { vendorName: parsedResult.vendorName, vendorId: parsedResult.vendorId };
         if (!dictName && parsedResult.vendorName) dictName = parsedResult.vendorName;
-        if (!dictSource && parsedResult.vendorName) dictSource = parsedResult.vendorName;
+        if (!dictSource && parsedResult.vendorName) dictSource = parsedResult.vendorName; // Use parsed vendor as source if not provided
         console.log(`API: AI parsing complete. Vendor: ${vendorInfo.vendorName}, Attributes found: ${exampleAttributesArray.length}`);
       } catch (parseError: any) {
         console.warn("API: AI parsing of dictionary content failed during POST:", parseError.message);
       }
     }
     
-    if (!dictName) {
+    if (!dictName) { // If name is still not set (e.g. manual mode without name, or parsing failed to get vendor)
       return NextResponse.json({ message: 'Dictionary name is required (either provided directly or parsable from content)' }, { status: 400 });
     }
     dictSource = dictSource || (body.rawContent ? "Parsed from Content" : "Manually Created");

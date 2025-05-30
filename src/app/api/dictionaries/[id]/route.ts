@@ -12,17 +12,25 @@ interface Params {
 
 // Helper to parse JSON safely
 const parseJsonField = (jsonString: string | null | undefined, defaultValue: any[] = []): Attribute[] => {
-  if (!jsonString) return defaultValue;
+  if (jsonString === null || jsonString === undefined) {
+    return defaultValue;
+  }
+  if (typeof jsonString !== 'string') {
+    // console.warn('API [id]: parseJsonField received non-string input, returning default. Input type:', typeof jsonString);
+    return defaultValue;
+  }
+  if (jsonString.trim() === '') {
+    return defaultValue;
+  }
   try {
     const parsed = JSON.parse(jsonString);
-     // Add basic validation for attribute structure if needed
     if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
       return parsed as Attribute[];
     }
-    // console.warn('Parsed JSON field for attributes was not an array of valid Attribute objects:', parsed);
+    // console.warn('API [id]: Parsed JSON field for attributes was not an array of valid Attribute objects. Input snippet:', jsonString.substring(0,100));
     return defaultValue;
-  } catch (e) {
-    console.error('Failed to parse JSON field for dictionary attributes:', e);
+  } catch (e: any) {
+    console.error('API [id]: Failed to parse JSON field for dictionary attributes:', e.message, 'Input string snippet:', jsonString.substring(0,100));
     return defaultValue;
   }
 };
@@ -37,17 +45,18 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
       return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
     }
     
-    const exampleAttrs = parseJsonField(dictFromDb.exampleAttributes as string | null);
+    const exampleAttrs = parseJsonField(dictFromDb.exampleAttributes as string | null, []);
     let validLastUpdated: string;
     if (dictFromDb.lastUpdated) {
       const dateObj = new Date(dictFromDb.lastUpdated as string);
       if (!isNaN(dateObj.getTime())) {
         validLastUpdated = dateObj.toISOString();
       } else {
-        console.warn(`API: Invalid date string for dictionary ID ${dictFromDb.id}: ${dictFromDb.lastUpdated}. Defaulting lastUpdated.`);
+        console.warn(`API [id]: Invalid date string for dictionary ID ${dictFromDb.id}: ${dictFromDb.lastUpdated}. Defaulting lastUpdated.`);
         validLastUpdated = new Date(0).toISOString();
       }
     } else {
+      console.warn(`API [id]: Missing lastUpdated for dictionary ID ${dictFromDb.id}. Defaulting lastUpdated.`);
       validLastUpdated = new Date(0).toISOString();
     }
     
@@ -59,7 +68,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
       lastUpdated: validLastUpdated,
       exampleAttributes: exampleAttrs, 
       attributes: exampleAttrs.length, 
-      vendorCodes: 0, // Placeholder
+      vendorCodes: 0, // Placeholder, could be derived if VENDOR tag is reliably parsed
     };
 
     return NextResponse.json(dictionary);
@@ -74,8 +83,8 @@ interface PutRequestBody {
   name?: string;
   source?: string;
   isActive?: boolean;
-  rawContent?: string;
-  exampleAttributes?: Attribute[]; // Allow updating exampleAttributes directly (e.g. from manual edits)
+  rawContent?: string; // For re-parsing dictionary file content
+  exampleAttributes?: Attribute[]; // Allow updating exampleAttributes directly (e.g. from manual edits on frontend)
 }
 
 // PUT (update) a dictionary's metadata by ID
@@ -88,12 +97,15 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       return NextResponse.json({ message: 'Dictionary not found' }, { status: 404 });
     }
 
-    let exampleAttributesString = existingDict.exampleAttributes as string | null;
+    let exampleAttributesForDb: string | undefined = undefined; // This will be the JSON string
     let vendorInfo: { vendorName?: string; vendorId?: string } = {};
+    let finalName = body.name !== undefined ? body.name : existingDict.name as string;
+    let finalSource = body.source !== undefined ? body.source : existingDict.source as string | null;
+
 
     if (body.rawContent) {
       try {
-        console.log(`API: Received rawContent for dictionary ${params.id}, attempting to parse...`);
+        console.log(`API [id]: Received rawContent for dictionary ${params.id}, attempting to re-parse...`);
         const parsedResult = await parseDictionaryFileContent({ dictionaryContent: body.rawContent });
         let parsedExampleAttributes: Attribute[] = [];
         if (parsedResult.attributes) {
@@ -106,23 +118,36 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
             examples: attr.examples || '',
           }));
         }
-        exampleAttributesString = JSON.stringify(parsedExampleAttributes);
+        exampleAttributesForDb = JSON.stringify(parsedExampleAttributes);
         vendorInfo = { vendorName: parsedResult.vendorName, vendorId: parsedResult.vendorId };
-        console.log(`API: Parsing complete for dictionary ${params.id}. Vendor: ${vendorInfo.vendorName}, Attributes found: ${parsedExampleAttributes.length}`);
+
+        // If name/source not explicitly provided in PUT body, use parsed vendor info if available
+        if (body.name === undefined && vendorInfo.vendorName) finalName = vendorInfo.vendorName;
+        if (body.source === undefined && vendorInfo.vendorName) finalSource = vendorInfo.vendorName;
+
+        console.log(`API [id]: Re-parsing complete for dictionary ${params.id}. Vendor: ${vendorInfo.vendorName}, Attributes found: ${parsedExampleAttributes.length}`);
       } catch (parseError: any) {
-        console.warn(`API: AI parsing of dictionary content failed during PUT for ${params.id}:`, parseError.message);
-        // Potentially fall back or return error if parsing is critical for update
+        console.warn(`API [id]: AI parsing of dictionary content failed during PUT for ${params.id}:`, parseError.message);
+        // If parsing fails, do not overwrite existing exampleAttributes unless explicitly provided
+        if (body.exampleAttributes === undefined) {
+          exampleAttributesForDb = existingDict.exampleAttributes as string | undefined;
+        } else {
+          exampleAttributesForDb = JSON.stringify(body.exampleAttributes || []);
+        }
       }
     } else if (body.exampleAttributes !== undefined) {
       // If rawContent is not provided, but exampleAttributes is, use that directly
-      exampleAttributesString = JSON.stringify(body.exampleAttributes);
+      exampleAttributesForDb = JSON.stringify(body.exampleAttributes);
+    } else {
+      // No rawContent and no explicit exampleAttributes provided, keep existing
+      exampleAttributesForDb = existingDict.exampleAttributes as string | undefined;
     }
 
     const updatedDictData = {
-      name: body.name !== undefined ? body.name : existingDict.name,
-      source: body.source !== undefined ? body.source : existingDict.source,
+      name: finalName,
+      source: finalSource || 'Unknown', // Ensure source is not null
       isActive: typeof body.isActive === 'boolean' ? (body.isActive ? 1 : 0) : existingDict.isActive,
-      exampleAttributes: exampleAttributesString,
+      exampleAttributes: exampleAttributesForDb === undefined ? existingDict.exampleAttributes : exampleAttributesForDb,
       lastUpdated: new Date().toISOString(),
     };
 
@@ -141,7 +166,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
         return NextResponse.json({ message: 'Failed to retrieve updated dictionary after save' }, { status: 500});
     }
     
-    const exampleAttrsRet = parseJsonField(updatedDictAfterSave.exampleAttributes as string | null);
+    const exampleAttrsRet = parseJsonField(updatedDictAfterSave.exampleAttributes as string | null, []);
     let validLastUpdatedAfterSave: string;
     if (updatedDictAfterSave.lastUpdated) {
       const dateObj = new Date(updatedDictAfterSave.lastUpdated as string);
@@ -162,7 +187,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
         lastUpdated: validLastUpdatedAfterSave,
         exampleAttributes: exampleAttrsRet,
         attributes: exampleAttrsRet.length,
-        vendorCodes: vendorInfo.vendorId ? 1 : 0, 
+        vendorCodes: vendorInfo.vendorId ? 1 : 0, // This might not be accurate if only exampleAttributes were updated without re-parsing
     };
 
     return NextResponse.json(dictionaryToReturn);

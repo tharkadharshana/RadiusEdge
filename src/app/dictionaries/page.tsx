@@ -33,8 +33,9 @@ import { MoreHorizontal } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area'; 
 import { cn } from '@/lib/utils';
+import { v4 as uuidv4 } from 'uuid'; // For client-side ID generation for attributes
 
-export interface AttributeEnum { // Added for completeness if AI flow provides it
+export interface AttributeEnum { 
   id: string;
   name: string;
   value: string;
@@ -47,8 +48,8 @@ export interface Attribute {
   type: string;
   vendor: string;
   description: string;
-  options?: string[]; // Added based on AI flow
-  enumValues?: string[] | AttributeEnum[]; // Updated to allow more structured enums
+  options?: string[];
+  enumValues?: string[] | AttributeEnum[]; 
   examples?: string;
 }
 
@@ -107,7 +108,7 @@ export default function DictionariesPage() {
       setDictionaries(data.map(d => ({ 
         ...d, 
         attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : 0, 
-        vendorCodes: d.vendorCodes || 0,
+        vendorCodes: d.vendorCodes || 0, // Ensure vendorCodes has a default
         exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [] 
       })));
     } catch (error) {
@@ -138,34 +139,56 @@ export default function DictionariesPage() {
     try {
       let response;
       if (importMode === 'upload' && uploadedFiles && uploadedFiles.length > 1) {
-        // Bulk metadata import
-        const filesToUpload = Array.from(uploadedFiles).map(file => ({ name: file.name, content: '' })); // Content not sent for bulk
+        // Bulk import WITH content parsing
+        toast({ title: "Bulk Import Started", description: `Preparing ${uploadedFiles.length} files for import. This may take a while...` });
+        
+        const filesToUploadPromises = Array.from(uploadedFiles).map(async (file) => {
+          try {
+            const content = await file.text();
+            return { name: file.name, content };
+          } catch (readError) {
+            console.error(`Error reading file ${file.name}:`, readError);
+            toast({ title: "File Read Error", description: `Could not read file ${file.name}. It will be skipped or imported with empty content.`, variant: "destructive" });
+            return { name: file.name, content: '' }; // Send empty content if read fails, API will handle it
+          }
+        });
+        const filesToUpload = await Promise.all(filesToUploadPromises);
+        
         response = await fetch('/api/dictionaries', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ files: filesToUpload }),
         });
+
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(errorData.error || errorData.message || 'Failed to bulk import dictionary metadata');
         }
         const newDictionaries: Dictionary[] = await response.json();
-        setDictionaries(prev => [...newDictionaries.map(d => ({...d, attributes: 0, vendorCodes: 0, exampleAttributes: []})), ...prev]);
-        toast({ title: "Bulk Import Successful", description: `${newDictionaries.length} dictionary metadata entries added.` });
+        setDictionaries(prev => [...newDictionaries.map(d => ({
+            ...d, 
+            attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : 0, 
+            vendorCodes: d.vendorCodes || 0,
+            exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : []
+        })), ...prev]);
+        toast({ title: "Bulk Import Processed", description: `${newDictionaries.length} dictionary entries created/updated. Some may have failed parsing.` });
 
       } else {
         // Single import (manual, paste, or single file upload)
         let rawContent: string | undefined = undefined;
+        let nameForApi = newDictName;
+        let sourceForApi = newDictSource;
+
         if (importMode === 'paste') {
           rawContent = pastedDictContent;
         } else if (importMode === 'upload' && uploadedFiles && uploadedFiles.length === 1) {
           rawContent = await uploadedFiles[0].text();
-          if (!newDictName) setNewDictName(uploadedFiles[0].name.split('.').slice(0, -1).join('.') || uploadedFiles[0].name);
-          if (!newDictSource) setNewDictSource("Uploaded File");
+          if (!nameForApi) nameForApi = uploadedFiles[0].name.split('.').slice(0, -1).join('.') || uploadedFiles[0].name;
+          if (!sourceForApi) sourceForApi = "Uploaded File";
         }
 
-        if (!newDictName && importMode === 'manual' && !rawContent) {
-          toast({ title: "Missing Name", description: "Please provide a name for the dictionary.", variant: "destructive" });
+        if (!nameForApi && importMode === 'manual' && !rawContent) {
+          toast({ title: "Missing Name", description: "Please provide a name for the dictionary, or content to parse from.", variant: "destructive" });
           setIsSaving(false);
           return;
         }
@@ -173,7 +196,7 @@ export default function DictionariesPage() {
         response = await fetch('/api/dictionaries', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: newDictName, source: newDictSource, rawContent }),
+          body: JSON.stringify({ name: nameForApi, source: sourceForApi, rawContent }),
         });
         if (!response.ok) {
           const errorData = await response.json();
@@ -186,10 +209,10 @@ export default function DictionariesPage() {
           vendorCodes: newDictionary.vendorCodes || 0,
           exampleAttributes: Array.isArray(newDictionary.exampleAttributes) ? newDictionary.exampleAttributes : []
         }, ...prev]);
-        toast({ title: "Dictionary Imported", description: `Dictionary "${newDictionary.name}" added.` });
+        toast({ title: "Dictionary Imported", description: `Dictionary "${newDictionary.name}" added/updated.` });
       }
       resetImportDialog();
-      fetchDictionaries(); // Re-fetch to ensure list is up-to-date
+      fetchDictionaries(); 
     } catch (error) {
       console.error("Error importing dictionary:", error);
       toast({ title: "Import Failed", description: (error as Error).message, variant: "destructive" });
@@ -211,12 +234,11 @@ export default function DictionariesPage() {
         const errorData = await response.json();
         throw new Error(errorData.error || errorData.message || 'Failed to update dictionary status');
       }
-      // fetchDictionaries(); // Re-fetch for consistency
       const updatedDict: Dictionary = await response.json();
       setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? { 
         ...updatedDict, 
         attributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes.length : 0, 
-        vendorCodes: d.vendorCodes,
+        vendorCodes: d.vendorCodes || 0,
         exampleAttributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes : []
       } : d));
       toast({ title: "Success", description: `Dictionary "${updatedDict.name}" status updated.` });
@@ -255,14 +277,12 @@ export default function DictionariesPage() {
   };
   
   const handleViewAttributeDetail = (attribute: Attribute) => {
-    // This state needs to be defined if you want a separate modal for viewing attribute details
-    // For now, it's just console logging
     console.log("Selected attribute for detail view:", attribute);
     toast({ title: "Attribute Detail", description: `Name: ${attribute.name}, Code: ${attribute.code}`});
   };
 
   const openAttributeEditor = (attribute?: Attribute, index?: number) => {
-    setCurrentAttributeToEdit(attribute ? { ...attribute } : { id: `client_attr_${Date.now()}`, name: '', code: '', type: '', vendor: selectedDictionaryForView?.name || 'Standard', description: '', examples: '', isNew: !attribute });
+    setCurrentAttributeToEdit(attribute ? { ...attribute } : { id: uuidv4(), name: '', code: '', type: '', vendor: selectedDictionaryForView?.name || 'Standard', description: '', examples: '', isNew: !attribute });
     setAttributeEditIndex(attribute ? index! : null); 
     setIsAttributeEditorOpen(true);
   };
@@ -271,7 +291,7 @@ export default function DictionariesPage() {
     if (!currentAttributeToEdit) return;
     setEditingExampleAttributes(prev => {
       const newAttributes = [...prev];
-      if (attributeEditIndex !== null && !currentAttributeToEdit.isNew) { 
+      if (attributeEditIndex !== null && !currentAttributeToEdit.isNew && attributeEditIndex < newAttributes.length) { 
         newAttributes[attributeEditIndex] = currentAttributeToEdit as Attribute;
       } else { 
         newAttributes.push(currentAttributeToEdit as Attribute);
@@ -304,10 +324,14 @@ export default function DictionariesPage() {
       setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? { 
         ...updatedDictionary, 
         attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0, 
-        vendorCodes: d.vendorCodes, // keep original vendorCodes
+        vendorCodes: d.vendorCodes || 0, 
         exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : []
       } : d));
-      setSelectedDictionaryForView(null); 
+      setSelectedDictionaryForView(prev => prev ? {
+        ...prev,
+        exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : [],
+        attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0,
+      } : null); 
       toast({ title: "Attributes Saved", description: `Attributes for "${updatedDictionary.name}" updated.` });
     } catch (error) {
       console.error("Error saving attributes:", error);
@@ -327,7 +351,14 @@ export default function DictionariesPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isActive: targetStatus }),
-      }).then(res => res.ok ? res.json() : Promise.reject(new Error(`Failed for ${dict.name}`)))
+      }).then(async res => {
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({message: `HTTP error ${res.status}`}));
+            console.error(`Failed for ${dict.name}: ${errorData.message || res.statusText}`);
+            return Promise.reject(new Error(`Failed for ${dict.name}`));
+        }
+        return res.json();
+      })
     );
 
     try {
@@ -335,9 +366,9 @@ export default function DictionariesPage() {
       toast({ title: `${action} All Successful`, description: `All dictionaries have been ${action.toLowerCase()}d.` });
     } catch (error) {
       console.error(`Error during ${action.toLowerCase()} all:`, error);
-      toast({ title: `${action} All Failed`, description: `Some dictionaries could not be updated. Please check individual statuses.`, variant: "destructive" });
+      toast({ title: `${action} All Partially Failed`, description: `Some dictionaries could not be updated. Please check individual statuses.`, variant: "destructive" });
     } finally {
-      fetchDictionaries(); // Re-fetch all to get consistent state
+      fetchDictionaries(); 
       setIsSaving(false);
     }
   };
@@ -365,7 +396,8 @@ export default function DictionariesPage() {
                 <DialogHeader>
                   <DialogTitle>Import New Dictionary</DialogTitle>
                   <DialogDescription>
-                    Manually enter details, paste content, or upload file(s). Uploading multiple files creates metadata entries only.
+                    Manually enter details, paste content, or upload file(s).
+                    Uploading multiple files attempts to parse each; individual file import is recommended for large/complex files.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid grid-cols-3 gap-2 my-4">
@@ -396,7 +428,7 @@ export default function DictionariesPage() {
                     <div>
                       <Label htmlFor="dict-file-upload">Upload Dictionary File(s)</Label>
                       <Input id="dict-file-upload" type="file" ref={fileInputRef} onChange={(e) => setUploadedFiles(e.target.files)} multiple accept=".dic,.dictionary,.txt,text/plain" disabled={isSaving} />
-                      {uploadedFiles && uploadedFiles.length > 1 && <p className="text-xs text-muted-foreground mt-1">{uploadedFiles.length} files selected for bulk metadata import.</p>}
+                      {uploadedFiles && uploadedFiles.length > 1 && <p className="text-xs text-muted-foreground mt-1">{uploadedFiles.length} files selected for bulk import. Content will be parsed for each.</p>}
                     </div>
                   )}
                 </div>
@@ -487,12 +519,11 @@ export default function DictionariesPage() {
          </CardFooter>
       </Card>
 
-      {/* Dialog for Viewing/Managing Dictionary Attributes */}
       <Dialog open={!!selectedDictionaryForView} onOpenChange={(isOpen) => { if (!isOpen) setSelectedDictionaryForView(null); }}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>{selectedDictionaryForView?.name} - Attributes</DialogTitle>
-            <DialogDescription>Manage attributes for this dictionary. These are typically parsed from imported content.</DialogDescription>
+            <DialogTitle>{selectedDictionaryForView?.name} - Parsed/Example Attributes</DialogTitle>
+            <DialogDescription>Manage attributes for this dictionary. These are parsed from imported content or added manually.</DialogDescription>
           </DialogHeader>
           <div className="my-4">
              <Button onClick={() => openAttributeEditor()}><PlusCircle className="mr-2 h-4 w-4" /> Add Attribute Manually</Button>
@@ -544,7 +575,6 @@ export default function DictionariesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog for Adding/Editing a single Attribute */}
       <Dialog open={isAttributeEditorOpen} onOpenChange={setIsAttributeEditorOpen}>
         <DialogContent>
           <DialogHeader>
@@ -558,8 +588,8 @@ export default function DictionariesPage() {
               <div><Label>Type:</Label><Input value={currentAttributeToEdit.type || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, type: e.target.value} : null)} placeholder="e.g., string, integer, ipaddr" /></div>
               <div><Label>Vendor:</Label><Input value={currentAttributeToEdit.vendor || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, vendor: e.target.value} : null)} placeholder={selectedDictionaryForView?.name || "Standard"} /></div>
               <div><Label>Description:</Label><Textarea value={currentAttributeToEdit.description || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, description: e.target.value} : null)} /></div>
-              {/* For simplicity, enumValues editing is not directly implemented here, it comes from parser */}
               <div><Label>Options (comma-separated):</Label><Input value={currentAttributeToEdit.options?.join(', ') || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, options: e.target.value.split(',').map(s=>s.trim())} : null)} placeholder="e.g., has_tag, encrypt=1" /></div>
+              <div><Label>Enum Values (display only, parsed from content):</Label><Textarea value={renderAttributeValue(currentAttributeToEdit.enumValues)} rows={2} readOnly className="bg-muted/50" /></div>
               <div><Label>Example Usage/Value:</Label><Textarea value={currentAttributeToEdit.examples || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, examples: e.target.value} : null)} placeholder='e.g., User-Name = "testuser"' /></div>
             </div>
           )}
@@ -569,8 +599,6 @@ export default function DictionariesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Dialog for Viewing Attribute Full Details (Not implemented in this pass, could be a separate component) */}
 
     </div>
   );
