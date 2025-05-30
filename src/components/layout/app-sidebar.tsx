@@ -16,6 +16,7 @@ import {
   Waypoints,
   DatabaseZap,
   Users,
+  FileImport, // Assuming FileImport was for the removed Packet Importer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -30,6 +31,7 @@ import {
   SidebarMenuSubButton,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { SheetTitle } from "@/components/ui/sheet"; // Import SheetTitle
 import { Logo } from "./logo";
 import { ThemeToggle } from "./theme-toggle"; 
 
@@ -65,7 +67,7 @@ const navItems: NavItem[] = [
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const { open, state } = useSidebar();
+  const { open, state, isMobile } = useSidebar(); // Added isMobile
 
   const isActive = (href: string, segment?: string) => {
     if (segment) {
@@ -79,8 +81,14 @@ export function AppSidebar() {
       <SidebarHeader className="p-4">
         <Link href="/" className="flex items-center gap-2">
           <Logo className="h-8 w-8 text-primary" />
-          {state === "expanded" && (
-            <h1 className="text-xl font-semibold text-foreground">RadiusEdge</h1>
+          {/* 
+            Render SheetTitle if mobile OR if desktop and expanded.
+            This ensures SheetContent (which is DialogContent) has a title for accessibility in mobile view.
+          */}
+          {(isMobile || state === "expanded") && (
+            <SheetTitle asChild>
+              <h1 className="text-xl font-semibold text-foreground">RadiusEdge</h1>
+            </SheetTitle>
           )}
         </Link>
       </SidebarHeader>
@@ -93,13 +101,18 @@ export function AppSidebar() {
                   isActive={isActive(item.href, item.segment)}
                   tooltip={item.label}
                   className="justify-start"
-                  // For Shadcn Sidebar, we might need to handle sub-menu toggle explicitly
-                  // This example uses a simple link for parent, better would be Accordion behavior
                 >
                   <item.icon className="h-5 w-5" />
                   {state === "expanded" && <span>{item.label}</span>}
                 </SidebarMenuButton>
-                {open && state === 'expanded' && ( // Only show sub-menu if sidebar is open and expanded
+                {/* 
+                  Only render sub-menu if desktop sidebar is expanded.
+                  Mobile sheet will show all items directly or handle sub-navigation differently if needed.
+                  Currently, sub-items are not shown when sidebar is an icon-only bar or mobile sheet.
+                  This part might need adjustment depending on desired mobile sub-menu behavior.
+                  For now, focusing on the title accessibility.
+                */}
+                {(state === 'expanded' && !isMobile) && ( 
                   <SidebarMenuSub>
                     {item.subItems.map((subItem) => (
                       <SidebarMenuItem key={subItem.label}>
@@ -141,8 +154,7 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter className="p-4">
-        {/* You can add items to the footer, e.g., quick help or user profile short */}
-        {state === "collapsed" && (
+        {state === "collapsed" && !isMobile && (
           <ThemeToggle />
         )}
       </SidebarFooter>
