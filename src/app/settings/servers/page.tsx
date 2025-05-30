@@ -409,7 +409,7 @@ export default function ServerConfigPage() {
               </div>
 
               <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">SSH Details (for simulated tests)</legend>
+                <legend className="text-sm font-medium px-1">SSH Details (for simulated tests &amp; preambles)</legend>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="ssh-port">SSH Port</Label>
@@ -440,6 +440,56 @@ export default function ServerConfigPage() {
                             <Input id="ssh-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter SSH password (for simulation)"/>
                         </div>
                     )}
+                </div>
+                <div className="mt-6">
+                  <Label className="text-md font-semibold flex items-center gap-2">
+                    Scenario Execution SSH Preamble (Simulated)
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-1 mb-3">
+                    Define SSH commands (e.g., for jump hosts) that would (simulatively) run before RADIUS scenarios. RadiusEdge does NOT execute live SSH.
+                  </p>
+                  <div className="space-y-3">
+                    {(editingConfig.scenarioExecutionSshCommands || []).map((step, index) => (
+                      <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 flex-grow">
+                            <Terminal className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                            <Input
+                              value={step.name}
+                              onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)}
+                              className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
+                              placeholder="SSH Step Name"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <Switch
+                              id={`ssh-preamble-enabled-${index}`}
+                              checked={step.isEnabled}
+                              onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)}
+                              aria-label="Enable SSH preamble step"
+                            />
+                            <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div>
+                          <Label htmlFor={`ssh-preamble-cmd-${index}`} className="text-xs text-muted-foreground">Simulated SSH Command</Label>
+                          <Textarea
+                            id={`ssh-preamble-cmd-${index}`}
+                            value={step.command}
+                            onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)}
+                            rows={1}
+                            className="font-mono text-xs mt-1"
+                            placeholder="e.g., ssh user@jump.server.com"
+                          />
+                        </div>
+                      </Card>
+                    ))}
+                     <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="mt-2 w-full">
+                      <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Preamble Step
+                    </Button>
+                  </div>
                 </div>
               </fieldset>
 
@@ -549,57 +599,6 @@ export default function ServerConfigPage() {
                   </div>
               </fieldset>
 
-              <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
-                  <span>Scenario Execution SSH Preamble (Simulated)</span>
-                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="ml-auto">
-                    <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Step
-                  </Button>
-                </legend>
-                <p className="text-xs text-muted-foreground mt-1 mb-3">
-                  Define SSH commands (e.g., for jump hosts) that would (simulatively) run before RADIUS scenarios. RadiusEdge does NOT execute live SSH.
-                </p>
-                <div className="space-y-3">
-                  {(editingConfig.scenarioExecutionSshCommands || []).map((step, index) => (
-                    <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 flex-grow">
-                          <Terminal className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
-                          <Input
-                            value={step.name}
-                            onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)}
-                            className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
-                            placeholder="SSH Step Name"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <Switch
-                            id={`ssh-preamble-enabled-${index}`}
-                            checked={step.isEnabled}
-                            onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)}
-                            aria-label="Enable SSH preamble step"
-                          />
-                          <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div>
-                        <Label htmlFor={`ssh-preamble-cmd-${index}`} className="text-xs text-muted-foreground">Simulated SSH Command</Label>
-                        <Textarea
-                          id={`ssh-preamble-cmd-${index}`}
-                          value={step.command}
-                          onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)}
-                          rows={1}
-                          className="font-mono text-xs mt-1"
-                          placeholder="e.g., ssh user@jump.server.com"
-                        />
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </fieldset>
-
             </div>
             </ScrollArea>
           )}
@@ -690,3 +689,6 @@ export default function ServerConfigPage() {
     </div>
   );
 }
+
+
+    
