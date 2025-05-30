@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle, Edit3, Trash2, Save, Server as ServerIcon, KeyRound, ShieldCheck, MoreHorizontal } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Save, Server as ServerIcon, KeyRound, ShieldCheck, MoreHorizontal, Loader2, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
+import { testServerConnection, TestServerConnectionInput, TestServerConnectionOutput, TestServerConnectionStep } from '@/ai/flows/test-server-connection-flow';
+import { useToast } from '@/hooks/use-toast';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+
+
+type ServerStatus = 'connected' | 'disconnected' | 'unknown' | 'testing' | 'error_ssh' | 'error_config' | 'error_service' | 'issues_found';
 
 interface ServerConfig {
   id: string;
@@ -38,16 +45,18 @@ interface ServerConfig {
   sshPort: number;
   sshUser: string;
   authMethod: 'key' | 'password';
+  privateKey?: string; // For storing actual key content
+  password?: string; // For storing password
   radiusAuthPort: number;
   radiusAcctPort: number;
   defaultSecret: string;
-  nasSpecificSecrets?: Record<string, string>; // e.g., { "nas-01": "secret" }
-  status?: 'connected' | 'disconnected' | 'unknown'; // Added for display
+  nasSpecificSecrets?: Record<string, string>;
+  status?: ServerStatus; 
 }
 
 const initialServerConfigs: ServerConfig[] = [
-  { id: 'srv1', name: 'EU-Prod-FR-01', type: 'freeradius', host: 'radius-eu.example.com', sshPort: 22, sshUser: 'radius-admin', authMethod: 'key', radiusAuthPort: 1812, radiusAcctPort: 1813, defaultSecret: 'secret123', status: 'connected' },
-  { id: 'srv2', name: 'US-Staging-Custom', type: 'custom', host: 'staging-us-radius.example.net', sshPort: 22022, sshUser: 'deploy', authMethod: 'password', radiusAuthPort: 11812, radiusAcctPort: 11813, defaultSecret: 'staging_secret', status: 'disconnected' },
+  { id: 'srv1', name: 'EU-Prod-FR-01', type: 'freeradius', host: 'radius-eu.example.com', sshPort: 22, sshUser: 'radius-admin', authMethod: 'key', radiusAuthPort: 1812, radiusAcctPort: 1813, defaultSecret: 'secret123', status: 'unknown' },
+  { id: 'srv2', name: 'US-Staging-Custom', type: 'custom', host: 'staging-us-radius.example.net', sshPort: 22022, sshUser: 'deploy', authMethod: 'password', radiusAuthPort: 11812, radiusAcctPort: 11813, defaultSecret: 'staging_secret', status: 'unknown' },
 ];
 
 export default function ServerConfigPage() {
@@ -56,18 +65,24 @@ export default function ServerConfigPage() {
   const [nasSecretKey, setNasSecretKey] = useState('');
   const [nasSecretValue, setNasSecretValue] = useState('');
 
+  const [testingServerId, setTestingServerId] = useState<string | null>(null);
+  const [testConnectionResult, setTestConnectionResult] = useState<TestServerConnectionOutput | null>(null);
+  const [testConnectionError, setTestConnectionError] = useState<string | null>(null);
+  const { toast } = useToast();
+
   const handleEditConfig = (config: ServerConfig | null) => {
-    setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null); // Deep copy
+    setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null); 
     setNasSecretKey('');
     setNasSecretValue('');
   };
 
   const handleSaveConfig = () => {
     if (editingConfig) {
+      const configToSave = { ...editingConfig, status: editingConfig.status || 'unknown' };
       if (editingConfig.id === 'new') {
-        setConfigs(prev => [...prev, { ...editingConfig, id: `srv${Date.now()}` }]);
+        setConfigs(prev => [...prev, { ...configToSave, id: `srv${Date.now()}` }]);
       } else {
-        setConfigs(prev => prev.map(c => c.id === editingConfig.id ? editingConfig : c));
+        setConfigs(prev => prev.map(c => c.id === editingConfig.id ? configToSave : c));
       }
       handleEditConfig(null);
     }
@@ -82,10 +97,13 @@ export default function ServerConfigPage() {
       sshPort: 22,
       sshUser: 'root',
       authMethod: 'key',
+      privateKey: '',
+      password: '',
       radiusAuthPort: 1812,
       radiusAcctPort: 1813,
       defaultSecret: '',
       nasSpecificSecrets: {},
+      status: 'unknown',
     });
   };
 
@@ -107,6 +125,63 @@ export default function ServerConfigPage() {
           setNasSecretKey('');
           setNasSecretValue('');
       }
+  };
+
+  const handleTestConnection = async (configToTest: ServerConfig) => {
+    setTestingServerId(configToTest.id);
+    setTestConnectionResult(null);
+    setTestConnectionError(null);
+    setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'testing' } : c));
+
+    try {
+      const input: TestServerConnectionInput = {
+        id: configToTest.id,
+        host: configToTest.host,
+        sshPort: configToTest.sshPort,
+        sshUser: configToTest.sshUser,
+        authMethod: configToTest.authMethod,
+        privateKey: configToTest.privateKey,
+        password: configToTest.password,
+        serverType: configToTest.type,
+      };
+      const result = await testServerConnection(input);
+      setTestConnectionResult(result);
+      
+      let newStatus: ServerStatus = 'unknown';
+      if (result.overallStatus === 'success') newStatus = 'connected';
+      else if (result.overallStatus === 'failure') {
+        const sshFailed = result.steps.find(s => s.stepName === 'SSH Connection' && s.status === 'failure');
+        if (sshFailed) newStatus = 'error_ssh';
+        else {
+            const configFailed = result.steps.find(s => s.stepName.includes('Validate RADIUS Configuration') && s.status === 'failure');
+            if (configFailed) newStatus = 'error_config';
+            else newStatus = 'error_service'; // Generic service or other critical failure
+        }
+      } else if (result.overallStatus === 'partial') newStatus = 'issues_found';
+      
+      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: newStatus } : c));
+      toast({ title: "Connection Test Complete", description: `Test for ${configToTest.name} finished with status: ${result.overallStatus}.` });
+
+    } catch (error) {
+      console.error("Error testing connection:", error);
+      setTestConnectionError(error instanceof Error ? error.message : "An unknown error occurred during the test.");
+      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'unknown' } : c)); // Revert status
+      toast({ title: "Connection Test Failed", description: "Could not run the connection test.", variant: "destructive" });
+    }
+  };
+
+  const getStatusBadge = (status?: ServerStatus) => {
+    switch (status) {
+      case 'connected': return <Badge variant="default" className="bg-green-500/20 text-green-700 border-green-400 dark:bg-green-700/30 dark:text-green-300 dark:border-green-600">Connected</Badge>;
+      case 'disconnected': return <Badge variant="destructive">Disconnected</Badge>;
+      case 'testing': return <Badge variant="outline" className="text-blue-600 border-blue-400 dark:text-blue-400 dark:border-blue-500"><Loader2 className="mr-1 h-3 w-3 animate-spin" />Testing...</Badge>;
+      case 'error_ssh': return <Badge variant="destructive" className="bg-red-500/20 text-red-700 border-red-400 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">SSH Error</Badge>;
+      case 'error_config': return <Badge variant="destructive" className="bg-orange-500/20 text-orange-700 border-orange-400 dark:bg-orange-700/30 dark:text-orange-300 dark:border-orange-600">Config Error</Badge>;
+      case 'error_service': return <Badge variant="destructive" className="bg-yellow-500/20 text-yellow-700 border-yellow-400 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Service Error</Badge>;
+      case 'issues_found': return <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-700 border-yellow-400 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Issues Found</Badge>;
+      case 'unknown':
+      default: return <Badge variant="outline">Unknown</Badge>;
+    }
   };
 
 
@@ -143,28 +218,24 @@ export default function ServerConfigPage() {
                   <TableCell className="font-medium">{config.name}</TableCell>
                   <TableCell>{config.host}:{config.radiusAuthPort}</TableCell>
                   <TableCell><Badge variant="outline">{config.type}</Badge></TableCell>
-                  <TableCell>
-                    <Badge variant={config.status === 'connected' ? 'default' : 'destructive'} className={config.status === 'connected' ? 'bg-green-500/20 text-green-700 border-green-400' : 'bg-red-500/20 text-red-700 border-red-400'}>
-                      {config.status || 'unknown'}
-                    </Badge>
-                  </TableCell>
+                  <TableCell>{getStatusBadge(config.status)}</TableCell>
                   <TableCell className="text-right">
                      <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0">
+                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={testingServerId === config.id}>
                           <span className="sr-only">Open menu</span>
-                          <MoreHorizontal className="h-4 w-4" />
+                          {testingServerId === config.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEditConfig(config)}>
+                        <DropdownMenuItem onClick={() => handleEditConfig(config)} disabled={!!testingServerId}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleTestConnection(config)} disabled={!!testingServerId}>
                           <ShieldCheck className="mr-2 h-4 w-4" /> Test Connection
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10">
+                        <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!testingServerId}>
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -186,11 +257,12 @@ export default function ServerConfigPage() {
                 {editingConfig?.id === 'new' ? 'Add New Server Configuration' : `Edit Server: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Provide connection details for your RADIUS server.
+              Provide connection details for your RADIUS server. SSH details are for simulated tests.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
-            <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto pr-2">
+            <ScrollArea className="max-h-[70vh] pr-6">
+            <div className="space-y-4 py-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="server-name">Configuration Name</Label>
@@ -215,7 +287,7 @@ export default function ServerConfigPage() {
               </div>
 
               <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">SSH Details (for radclient execution)</legend>
+                <legend className="text-sm font-medium px-1">SSH Details (for simulated tests)</legend>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="ssh-port">SSH Port</Label>
@@ -235,17 +307,15 @@ export default function ServerConfigPage() {
                             </SelectContent>
                         </Select>
                     </div>
-                    {editingConfig.authMethod === 'key' && (
-                        <div>
+                    {editingConfig.authMethod === 'key' ? (
+                        <div className="md:col-span-2">
                             <Label htmlFor="ssh-key">SSH Private Key</Label>
-                            <Textarea id="ssh-key" placeholder="Paste your private key here (will be stored encrypted)" rows={3}/>
-                            <p className="text-xs text-muted-foreground mt-1">Or upload key file (not implemented)</p>
+                            <Textarea id="ssh-key" value={editingConfig.privateKey || ''} onChange={(e) => setEditingConfig({...editingConfig, privateKey: e.target.value})} placeholder="Paste your private key here (stored locally, used for simulation)" rows={3}/>
                         </div>
-                    )}
-                    {editingConfig.authMethod === 'password' && (
+                    ) : (
                          <div>
                             <Label htmlFor="ssh-password">SSH Password</Label>
-                            <Input id="ssh-password" type="password" placeholder="Enter SSH password"/>
+                            <Input id="ssh-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter SSH password (for simulation)"/>
                         </div>
                     )}
                 </div>
@@ -275,7 +345,7 @@ export default function ServerConfigPage() {
                     {Object.entries(editingConfig.nasSpecificSecrets || {}).map(([key, value]) => (
                         <div key={key} className="flex items-center gap-2">
                             <Input value={key} readOnly className="font-mono"/>
-                            <Input type="password" value={value} readOnly className="font-mono"/>
+                            <Input type="password" value={value} readOnly className="font-mono"/> {/* Changed to password for display */}
                             <Button variant="ghost" size="icon" onClick={() => handleNasSecretChange(key, '', 'remove')} className="text-destructive h-8 w-8">
                                 <Trash2 className="h-4 w-4"/>
                             </Button>
@@ -283,12 +353,13 @@ export default function ServerConfigPage() {
                     ))}
                      <div className="flex items-end gap-2 pt-2">
                         <div className="flex-1"><Label htmlFor="nas-key" className="text-xs">NAS Identifier (IP/Name)</Label><Input id="nas-key" value={nasSecretKey} onChange={(e) => setNasSecretKey(e.target.value)} placeholder="e.g., 10.0.0.1 or nas-01"/></div>
-                        <div className="flex-1"><Label htmlFor="nas-value" className="text-xs">Secret</Label><Input id="nas-value" type="password" value={nasSecretValue} onChange={(e) => setNasSecretValue(e.target.value)} placeholder="Secret for this NAS"/></div>
+                        <div className="flex-1"><Label htmlFor="nas-value" className="text-xs">Secret</Label><Input id="nas-value" type="text" value={nasSecretValue} onChange={(e) => setNasSecretValue(e.target.value)} placeholder="Secret for this NAS"/></div> {/* Changed to text for inputting */}
                         <Button onClick={addNasSecretEntry} size="sm"><PlusCircle className="h-4 w-4"/></Button>
                     </div>
                 </div>
               </fieldset>
             </div>
+            </ScrollArea>
           )}
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
@@ -296,6 +367,83 @@ export default function ServerConfigPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Test Connection Result Dialog */}
+      <Dialog open={!!(testingServerId && (testConnectionResult || testConnectionError))} onOpenChange={(isOpen) => {
+        if (!isOpen) {
+          setTestingServerId(null);
+          setTestConnectionResult(null);
+          setTestConnectionError(null);
+        }
+      }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Connection Test Results: {configs.find(c => c.id === testingServerId)?.name}</DialogTitle>
+            <DialogDescription>
+              Showing (simulated) results of the connection and setup checks. 
+              <span className="font-semibold text-destructive"> This is a simulation; no actual SSH or commands were run on your server.</span>
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh] pr-4 py-4">
+            {testConnectionError && (
+              <div className="p-4 bg-destructive/10 border border-destructive text-destructive rounded-md">
+                <h3 className="font-semibold flex items-center gap-2"><AlertTriangle />Error Running Test:</h3>
+                <p>{testConnectionError}</p>
+              </div>
+            )}
+            {testConnectionResult && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">Overall Status:</span>
+                  {testConnectionResult.overallStatus === 'success' && <Badge className="bg-green-500 hover:bg-green-600">Success</Badge>}
+                  {testConnectionResult.overallStatus === 'failure' && <Badge variant="destructive">Failure</Badge>}
+                  {testConnectionResult.overallStatus === 'partial' && <Badge variant="secondary" className="bg-yellow-500 hover:bg-yellow-600">Partial Success</Badge>}
+                </div>
+                {testConnectionResult.steps.map((step, index) => (
+                  <Card key={index} className="overflow-hidden">
+                    <CardHeader className={cn("p-3 flex flex-row items-center justify-between",
+                      step.status === 'success' && 'bg-green-500/10',
+                      step.status === 'failure' && 'bg-red-500/10',
+                      step.status === 'skipped' && 'bg-gray-500/10',
+                      step.status === 'running' && 'bg-blue-500/10 animate-pulse'
+                    )}>
+                      <div className="flex items-center gap-2">
+                        {step.status === 'success' && <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />}
+                        {step.status === 'failure' && <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />}
+                        {step.status === 'skipped' && <AlertTriangle className="h-5 w-5 text-gray-600 dark:text-gray-400" />}
+                        {step.status === 'running' && <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />}
+                        {step.status === 'pending' && <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />}
+                        <CardTitle className="text-md">{step.stepName}</CardTitle>
+                      </div>
+                      <Badge variant={
+                        step.status === 'success' ? 'default' :
+                        step.status === 'failure' ? 'destructive' :
+                        'outline'
+                      } className={cn(
+                        step.status === 'success' && 'bg-green-600 text-white',
+                        step.status === 'failure' && 'bg-red-600 text-white',
+                        step.status === 'skipped' && 'bg-gray-600 text-white'
+                      )}>{step.status}</Badge>
+                    </CardHeader>
+                    {(step.output || step.error || step.command) && (
+                        <CardContent className="p-3 text-xs bg-muted/30">
+                            {step.command && <p className="text-muted-foreground font-mono mb-1">Simulated command: <code className="text-foreground bg-background/50 px-1 rounded">{step.command}</code></p>}
+                            {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
+                            {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 dark:text-red-400 bg-red-500/10 p-2 rounded mt-1 max-h-40 overflow-y-auto">Error: {step.error}</pre>}
+                        </CardContent>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+          <DialogFooter>
+            <DialogClose asChild><Button>Close</Button></DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
+
