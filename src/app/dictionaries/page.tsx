@@ -15,10 +15,19 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
   DialogClose
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from "@/hooks/use-toast";
@@ -35,9 +44,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
-import type { ParseDictionaryContentOutput, ParsedAttribute as AiParsedAttribute, ParsedEnum as AiParsedEnum } from '@/ai/flows/parse-dictionary-file-content'; // Renamed to avoid conflict
+import type { ParseDictionaryContentOutput, ParsedAttribute as AiParsedAttribute, ParsedEnum as AiParsedEnum } from '@/ai/flows/parse-dictionary-file-content';
 
-export interface Attribute { // This is for manually managed example attributes or parsed ones
+export interface Attribute {
   id: string;
   name: string;
   code: string;
@@ -45,8 +54,7 @@ export interface Attribute { // This is for manually managed example attributes 
   vendor?: string;
   description?: string;
   options?: string[];
-  // Storing ParsedEnum directly for simplicity, though it has an 'id' field we might not use for display here.
-  enumValues?: (string | AiParsedEnum)[]; 
+  enumValues?: (string | AiParsedEnum)[];
   examples?: string;
 }
 
@@ -54,11 +62,18 @@ export interface Dictionary {
   id: string;
   name: string;
   source: string;
-  attributes: number; // Count of exampleAttributes or parsed attributes
-  vendorCodes: number; // Placeholder, could be derived
+  attributes: number;
+  vendorCodes: number;
   isActive: boolean;
-  lastUpdated: string; // ISO String
-  exampleAttributes?: Attribute[]; // Array of Attribute objects, parsed from JSON string from API
+  lastUpdated: string;
+  exampleAttributes?: Attribute[];
+}
+
+interface PendingDeleteInfo {
+  type: 'single' | 'bulk';
+  id?: string;
+  name?: string;
+  ids?: string[];
 }
 
 
@@ -70,16 +85,19 @@ export default function DictionariesPage() {
   const [currentAttributeToEdit, setCurrentAttributeToEdit] = useState<Partial<Attribute> & { isNew?: boolean } | null>(null);
   const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSavingAttributes, setIsSavingAttributes] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // General saving state for enable/disable, delete
+  const [isSavingAttributes, setIsSavingAttributes] = useState(false); // Specific for saving attributes in dialog
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [importMode, setImportMode] = useState<'manual' | 'paste' | 'upload'>('manual');
   const [newDictName, setNewDictName] = useState('');
   const [newDictSource, setNewDictSource] = useState('');
   const [pastedDictContent, setPastedDictContent] = useState('');
-  const [uploadedFiles, setUploadedFiles] = useState<FileList | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedDictionaryIds, setSelectedDictionaryIds] = useState<string[]>([]);
+  
+  const [showDeleteConfirmDialog, setShowDeleteConfirmDialog] = useState(false);
+  const [pendingDeleteInfo, setPendingDeleteInfo] = useState<PendingDeleteInfo | null>(null);
 
 
   const { toast } = useToast();
@@ -94,7 +112,7 @@ export default function DictionariesPage() {
         try {
           const errorData = await response.json();
           apiError = errorData.error || errorData.message || apiError;
-          console.error("FRONTEND: API error data from fetchDictionaries:", errorData);
+          console.error("API error data:", errorData);
         } catch (e) {
           const textError = await response.text().catch(() => "Could not get error text from response.");
           apiError += `. Response: ${textError.substring(0, 150)}`;
@@ -103,12 +121,11 @@ export default function DictionariesPage() {
         throw new Error(apiError);
       }
       const data: Dictionary[] = await response.json();
-      // The API should now return exampleAttributes already parsed as an array of objects
-      setDictionaries(data.map(d => ({ 
-        ...d, 
-        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [], // Ensure it's an array
+      setDictionaries(data.map(d => ({
+        ...d,
+        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [],
         attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : (d.attributes || 0),
-        vendorCodes: d.vendorCodes || 0, 
+        vendorCodes: d.vendorCodes || 0,
       })));
       console.log("FRONTEND: Dictionaries fetched and set:", data.length);
     } catch (error) {
@@ -127,7 +144,7 @@ export default function DictionariesPage() {
     setNewDictName('');
     setNewDictSource('');
     setPastedDictContent('');
-    setUploadedFiles(null);
+    setUploadedFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
     setImportMode('manual');
     setIsImportDialogOpen(false);
@@ -152,7 +169,7 @@ export default function DictionariesPage() {
           } catch (readError) {
             console.error(`FRONTEND: Error reading file ${file.name}:`, readError);
             toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
-            return { name: file.name, content: '' }; // Send with empty content if read fails
+            return { name: file.name, content: '' };
           }
         }));
         requestBody.files = filesToProcess;
@@ -167,14 +184,13 @@ export default function DictionariesPage() {
         if (newDictName) requestBody.name = newDictName;
         if (newDictSource) requestBody.source = newDictSource;
         toastDescription = "Parsing pasted content...";
-      } else { // Manual mode
+      } else {
         if (!newDictName) {
           toast({ title: "Missing Name", description: "Please provide a name for the dictionary.", variant: "destructive" });
           setIsSaving(false); return;
         }
         requestBody.name = newDictName;
         requestBody.source = newDictSource || "Manually Created";
-        // No rawContent, so no AI parsing for purely manual entry unless user adds it later
         toastDescription = `Creating dictionary metadata for ${newDictName}...`;
       }
       
@@ -241,40 +257,117 @@ export default function DictionariesPage() {
     }
   };
 
-  const handleDeleteDictionary = async (id: string, name: string) => {
-    console.log(`FRONTEND: Attempting to delete dictionary ID: ${id}, Name: ${name}`);
-    if (!window.confirm(`Are you sure you want to delete the dictionary "${name}"? This will also remove its attributes.`)) {
-      console.log("FRONTEND: Delete cancelled by user for ID:", id);
+  const requestSingleDelete = (id: string, name: string) => {
+    console.log(`FRONTEND: Staging single delete for ID: ${id}, Name: ${name}`);
+    setPendingDeleteInfo({ type: 'single', id, name });
+    setShowDeleteConfirmDialog(true);
+  };
+
+  const requestBulkDelete = () => {
+    if (selectedDictionaryIds.length === 0) {
+      toast({ title: "No Dictionaries Selected", description: "Please select dictionaries to delete.", variant: "default" });
       return;
     }
-    setIsSaving(true);
-    try {
-      const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
-      console.log(`FRONTEND: Delete API response status for ID ${id}: ${response.status}`);
-      if (!response.ok) {
-        let errorMsg = `Failed to delete dictionary. Status: ${response.status}`;
-        try {
-          const errorData = await response.json();
-          errorMsg = errorData.error || errorData.message || errorMsg;
-          console.error(`FRONTEND: Delete API error data for ID ${id}:`, errorData);
-        } catch (e) { /* ignore if response is not json */ }
-        throw new Error(errorMsg);
-      }
-      toast({ title: "Dictionary Deleted", description: `Dictionary "${name}" removed.` });
-      await fetchDictionaries(); // Await the fetch
-      setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id)); // Update selection *after* successful fetch
-      console.log(`FRONTEND: Successfully deleted dictionary ID: ${id}. Refetched dictionaries.`);
-    } catch (error) {
-      console.error(`FRONTEND: Error deleting dictionary ID ${id}:`, error);
-      toast({ title: "Delete Failed", description: (error as Error).message, variant: "destructive" });
-    } finally {
-      setIsSaving(false);
-    }
+    console.log("FRONTEND: Staging bulk delete for IDs:", selectedDictionaryIds);
+    setPendingDeleteInfo({ type: 'bulk', ids: [...selectedDictionaryIds] });
+    setShowDeleteConfirmDialog(true);
   };
+
+  const executeConfirmedDelete = async () => {
+    if (!pendingDeleteInfo) return;
+
+    setIsSaving(true);
+    const currentPendingDelete = { ...pendingDeleteInfo }; // Capture current state
+    setPendingDeleteInfo(null); // Clear immediately to prevent re-triggering on dialog close
+    // setShowDeleteConfirmDialog will be set to false by AlertDialogCancel or after successful action
+
+    if (currentPendingDelete.type === 'single' && currentPendingDelete.id && currentPendingDelete.name) {
+      const { id, name } = currentPendingDelete;
+      console.log(`FRONTEND: Executing single delete for ID: ${id}, Name: ${name}`);
+      try {
+        const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
+        console.log(`FRONTEND: Single delete API response status for ID ${id}: ${response.status}`);
+        if (!response.ok) {
+          let errorMsg = `Failed to delete dictionary. Status: ${response.status}`;
+          try {
+            const errorData = await response.json();
+            errorMsg = errorData.error || errorData.message || errorMsg;
+            console.error(`FRONTEND: Single delete API error data for ID ${id}:`, errorData);
+          } catch (e) { /* ignore if response is not json */ }
+          throw new Error(errorMsg);
+        }
+        toast({ title: "Dictionary Deleted", description: `Dictionary "${name}" removed.` });
+        await fetchDictionaries();
+        setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id));
+        console.log(`FRONTEND: Successfully deleted dictionary ID: ${id}. Refetched dictionaries.`);
+      } catch (error) {
+        console.error(`FRONTEND: Error deleting dictionary ID ${id}:`, error);
+        toast({ title: "Delete Failed", description: (error as Error).message, variant: "destructive" });
+      }
+    } else if (currentPendingDelete.type === 'bulk' && currentPendingDelete.ids && currentPendingDelete.ids.length > 0) {
+      const idsToDelete = currentPendingDelete.ids;
+      console.log("FRONTEND: Executing bulk delete for IDs:", idsToDelete);
+      toast({ title: "Bulk Delete In Progress", description: `Attempting to delete ${idsToDelete.length} dictionaries...` });
+
+      const deletePromises = idsToDelete.map(id =>
+        fetch(`/api/dictionaries/${id}`, { method: 'DELETE' })
+        .then(async res => {
+          console.log(`FRONTEND: Bulk delete API response for ID ${id}, Status: ${res.status}`);
+          if (!res.ok) {
+              let errorMsg = `Failed for ID ${id}. Status: ${res.status}`;
+              try {
+                  const errorData = await res.json();
+                  errorMsg = errorData.message || errorData.error || errorMsg;
+              } catch (e) { /* ignore */ }
+              throw new Error(errorMsg);
+          }
+          return { id, success: true };
+        })
+        .catch(error => {
+            console.error(`FRONTEND: Error in fetch promise for ID ${id} during bulk delete:`, error);
+            return { id, success: false, error: error.message || `Failed for ID ${id}` };
+          })
+      );
+
+      const results = await Promise.allSettled(deletePromises);
+      let successfulDeletesCount = 0;
+      const failedDeletesMessages: string[] = [];
+
+      results.forEach(result => {
+        if (result.status === 'fulfilled' && result.value.success) {
+          successfulDeletesCount++;
+        } else if (result.status === 'fulfilled' && !result.value.success) {
+            failedDeletesMessages.push(result.value.error || `Unknown error for ID ${result.value.id}`);
+        } else if (result.status === 'rejected') {
+          failedDeletesMessages.push(result.reason.message || "Unknown failure");
+        }
+      });
+
+      if (failedDeletesMessages.length > 0) {
+         const failedSummary = failedDeletesMessages.length > 3 ? failedDeletesMessages.slice(0, 3).join('; ') + '...' : failedDeletesMessages.join('; ');
+        toast({
+          title: "Bulk Delete Partially Failed",
+          description: `${successfulDeletesCount} succeeded. ${failedDeletesMessages.length} failed: ${failedSummary}. Check console.`,
+          variant: "destructive",
+          duration: 10000
+        });
+      } else if (successfulDeletesCount > 0) {
+        toast({ title: "Bulk Delete Successful", description: `All ${successfulDeletesCount} selected dictionaries deleted.` });
+      } else {
+         toast({ title: "Bulk Delete: No Changes", description: "No dictionaries were deleted.", variant: "default" });
+      }
+      
+      await fetchDictionaries(); 
+      setSelectedDictionaryIds([]);
+    }
+
+    setShowDeleteConfirmDialog(false); // Close dialog after action
+    setIsSaving(false);
+  };
+
 
   const handleViewDictionary = (dictionary: Dictionary) => {
     setSelectedDictionaryForView(dictionary);
-    // Ensure exampleAttributes is an array, even if it comes as undefined/null from older data
     const attributesArray = Array.isArray(dictionary.exampleAttributes) ? dictionary.exampleAttributes : [];
     setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); 
   };
@@ -324,7 +417,6 @@ export default function DictionariesPage() {
     if (!selectedDictionaryForView) return;
     setIsSavingAttributes(true);
     try {
-      // Send the current editingExampleAttributes array as JSON string
       const response = await fetch(`/api/dictionaries/${selectedDictionaryForView.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -373,10 +465,9 @@ export default function DictionariesPage() {
     headerCheckboxCheckedState = false;
   }
 
-  const handleSelectAll = (checked: boolean | 'indeterminate') => {
-    // When the header checkbox is clicked, its `checked` state will be boolean
+  const handleSelectAll = (checked: boolean) => {
     console.log("FRONTEND: handleSelectAll called with checked:", checked);
-    if (checked === true) {
+    if (checked) {
       setSelectedDictionaryIds(dictionaries.map(d => d.id));
     } else { 
       setSelectedDictionaryIds([]);
@@ -441,78 +532,6 @@ export default function DictionariesPage() {
     setIsSaving(false);
   };
 
-  const handleBulkDelete = async () => {
-    console.log("FRONTEND: handleBulkDelete called with selected IDs:", selectedDictionaryIds);
-    if (selectedDictionaryIds.length === 0) {
-      toast({ title: "No Dictionaries Selected", description: "Please select dictionaries to delete.", variant: "default" });
-      return;
-    }
-    if (!window.confirm(`Are you sure you want to delete ${selectedDictionaryIds.length} selected dictionaries? This action cannot be undone.`)) {
-      console.log("FRONTEND: Bulk delete cancelled by user.");
-      return;
-    }
-
-    setIsSaving(true);
-    toast({ title: "Bulk Delete In Progress", description: `Attempting to delete ${selectedDictionaryIds.length} dictionaries...` });
-
-    const deletePromises = selectedDictionaryIds.map(id =>
-      fetch(`/api/dictionaries/${id}`, { method: 'DELETE' })
-      .then(async res => {
-        console.log(`FRONTEND: Bulk delete API response for ID ${id}, Status: ${res.status}`);
-        if (!res.ok) {
-            let errorMsg = `Failed to delete dictionary ID ${id}. Status: ${res.status}`;
-            try {
-                const errorData = await res.json();
-                console.error(`FRONTEND: Bulk delete API error data for ID ${id}:`, errorData);
-                errorMsg = errorData.message || errorData.error || errorMsg;
-            } catch (e) { console.warn(`FRONTEND: Could not parse JSON error for ID ${id} during bulk delete.`); }
-            throw new Error(errorMsg);
-        }
-        const responseData = await res.json().catch(() => ({ message: "Successfully deleted, but no response body" }));
-        console.log(`FRONTEND: Successfully processed delete for ID ${id}. Response:`, responseData);
-        return { id, deleted: true, apiResponse: responseData };
-      })
-      .catch(error => {
-          console.error(`FRONTEND: Error in fetch promise for ID ${id} during bulk delete:`, error);
-          throw new Error(error.message || `Failed to process deletion for dictionary ID ${id} due to an unknown error.`);
-        })
-    );
-
-    const results = await Promise.allSettled(deletePromises);
-    let successfulDeletesCount = 0;
-    const failedDeletesMessages: string[] = [];
-
-    results.forEach(result => {
-      if (result.status === 'fulfilled') {
-        successfulDeletesCount++;
-      } else { 
-        failedDeletesMessages.push(result.reason.message);
-        console.error(`FRONTEND: Bulk delete failure reported by Promise.allSettled:`, result.reason.message);
-      }
-    });
-
-    if (failedDeletesMessages.length > 0) {
-       const failedSummary = failedDeletesMessages.length > 3 ? failedDeletesMessages.slice(0, 3).join('; ') + '...' : failedDeletesMessages.join('; ');
-      toast({
-        title: "Bulk Delete Partially Failed",
-        description: `${successfulDeletesCount} succeeded. ${failedDeletesMessages.length} failed: ${failedSummary}. Check console for full details.`,
-        variant: "destructive",
-        duration: 10000
-      });
-    } else if (successfulDeletesCount > 0) {
-      toast({ title: "Bulk Delete Successful", description: `All ${successfulDeletesCount} selected dictionaries deleted.` });
-    } else if (selectedDictionaryIds.length > 0 && successfulDeletesCount === 0 && failedDeletesMessages.length === 0) {
-       toast({ title: "Bulk Delete: No Changes", description: "Operation completed. No dictionaries were deleted (perhaps they were already gone or an unknown issue occurred).", variant: "default" });
-    } else if (selectedDictionaryIds.length > 0) { // if some were selected but all failed or none processed
-       toast({ title: "Bulk Delete Failed", description: "No dictionaries were deleted. All attempts failed or no changes were made. Check console for errors.", variant: "destructive" });
-    }
-    
-    console.log("FRONTEND: Calling fetchDictionaries after bulk delete operations.");
-    await fetchDictionaries(); 
-    setSelectedDictionaryIds([]); 
-    setIsSaving(false);
-  };
-
 
   return (
     <div className="space-y-8">
@@ -537,7 +556,7 @@ export default function DictionariesPage() {
                     <Square className="mr-2 h-4 w-4" /> Disable Selected
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleBulkDelete} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
+                  <DropdownMenuItem onClick={requestBulkDelete} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
                     <Trash2 className="mr-2 h-4 w-4" /> Delete Selected
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -582,14 +601,14 @@ export default function DictionariesPage() {
                   {importMode === 'upload' && (
                     <div>
                       <Label htmlFor="dict-file-upload">Upload Dictionary File(s)</Label>
-                      <Input id="dict-file-upload" type="file" ref={fileInputRef} onChange={(e) => setUploadedFiles(e.target.files)} multiple accept=".dic,.dictionary,.txt,text/plain" disabled={isSaving} />
+                      <Input id="dict-file-upload" type="file" ref={fileInputRef} onChange={(e) => setUploadedFiles(Array.from(e.target.files || []))} multiple accept=".dic,.dictionary,.txt,text/plain" disabled={isSaving} />
                       {uploadedFiles && uploadedFiles.length > 1 && <p className="text-xs text-muted-foreground mt-1">{uploadedFiles.length} files selected for bulk import. Content will be parsed for each.</p>}
                     </div>
                   )}
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={resetImportDialog} disabled={isSaving}>Cancel</Button>
-                  <Button onClick={handleImportDictionary} disabled={isSaving || (importMode === 'upload' && !uploadedFiles)}>
+                  <Button onClick={handleImportDictionary} disabled={isSaving || (importMode === 'upload' && uploadedFiles.length === 0)}>
                     {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null}
                     Import
                   </Button>
@@ -619,7 +638,7 @@ export default function DictionariesPage() {
                    <Checkbox
                     checked={headerCheckboxCheckedState}
                     onCheckedChange={(checked) => {
-                        handleSelectAll(!!checked); 
+                        handleSelectAll(Boolean(checked)); 
                     }}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
@@ -668,7 +687,7 @@ export default function DictionariesPage() {
                            <Eye className="mr-2 h-4 w-4" /> View/Manage Attributes
                          </DropdownMenuItem>
                          <DropdownMenuSeparator />
-                         <DropdownMenuItem onClick={() => handleDeleteDictionary(dict.id, dict.name)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
+                         <DropdownMenuItem onClick={() => requestSingleDelete(dict.id, dict.name)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
                            <Trash2 className="mr-2 h-4 w-4" /> Delete
                          </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -775,9 +794,29 @@ export default function DictionariesPage() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={showDeleteConfirmDialog} onOpenChange={(open) => {
+        if (!open) setPendingDeleteInfo(null); // Clear pending info if dialog is closed via 'x' or overlay click
+        setShowDeleteConfirmDialog(open);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteInfo?.type === 'single' && `Are you sure you want to delete the dictionary "${pendingDeleteInfo.name}"?`}
+              {pendingDeleteInfo?.type === 'bulk' && `Are you sure you want to delete the ${pendingDeleteInfo.ids?.length} selected dictionaries?`}
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {setShowDeleteConfirmDialog(false); setPendingDeleteInfo(null);}}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeConfirmedDelete} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   );
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
-
-    
