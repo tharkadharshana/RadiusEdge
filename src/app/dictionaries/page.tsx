@@ -35,22 +35,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
+import type { ParseDictionaryContentOutput, ParsedAttribute, ParsedEnum } from '@/ai/flows/parse-dictionary-file-content';
 
-export interface AttributeEnum {
-  id: string;
-  name: string;
-  value: string;
-}
-
+// Adjusted Attribute interface to better match ParsedAttribute from the AI flow
 export interface Attribute {
   id: string;
   name: string;
   code: string;
   type: string;
-  vendor: string;
-  description: string;
+  vendor?: string;
+  description?: string;
   options?: string[];
-  enumValues?: string[] | AttributeEnum[];
+  enumValues?: (string | ParsedEnum)[]; // Can be simple strings or ParsedEnum objects
   examples?: string;
 }
 
@@ -58,11 +54,11 @@ export interface Dictionary {
   id: string;
   name: string;
   source: string;
-  attributes: number;
-  vendorCodes: number;
+  attributes: number; // Count of exampleAttributes
+  vendorCodes: number; // Placeholder
   isActive: boolean;
-  lastUpdated: string;
-  exampleAttributes?: Attribute[];
+  lastUpdated: string; // ISO string
+  exampleAttributes?: Attribute[]; // Array of actual attribute objects
 }
 
 
@@ -104,12 +100,8 @@ export default function DictionariesPage() {
         throw new Error(apiError);
       }
       const data: Dictionary[] = await response.json();
-      setDictionaries(data.map(d => ({
-        ...d,
-        attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : 0,
-        vendorCodes: d.vendorCodes || 0,
-        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : []
-      })));
+      // API returns exampleAttributes as an array of objects already parsed from JSON string by the API GET routes
+      setDictionaries(data.map(d => ({ ...d, attributes: d.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes || 0 })));
     } catch (error) {
       console.error("Error fetching dictionaries (frontend catch):", error);
       toast({ title: "Error Fetching Dictionaries", description: (error as Error).message, variant: "destructive" });
@@ -269,7 +261,18 @@ export default function DictionariesPage() {
 
   const handleViewAttributeDetail = (attribute: Attribute) => {
     console.log("Selected attribute for detail view:", attribute);
-    toast({ title: "Attribute Detail", description: `Name: ${attribute.name}, Code: ${attribute.code}`});
+    let details = `Name: ${attribute.name}\nCode: ${attribute.code}\nType: ${attribute.type}`;
+    if (attribute.vendor) details += `\nVendor: ${attribute.vendor}`;
+    if (attribute.description) details += `\nDescription: ${attribute.description}`;
+    if (attribute.options && attribute.options.length > 0) details += `\nOptions: ${attribute.options.join(', ')}`;
+    if (attribute.enumValues && attribute.enumValues.length > 0) details += `\nEnum Values: ${renderAttributeValue(attribute.enumValues)}`;
+    if (attribute.examples) details += `\nExample: ${attribute.examples}`;
+
+    toast({ 
+        title: `Attribute: ${attribute.name}`, 
+        description: <pre className="whitespace-pre-wrap text-xs">{details}</pre>,
+        duration: 10000 // Allow more time to read details
+    });
   };
 
   const openAttributeEditor = (attribute?: Attribute, index?: number) => {
@@ -315,7 +318,7 @@ export default function DictionariesPage() {
       setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? {
         ...updatedDictionary,
         attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0,
-        vendorCodes: d.vendorCodes || 0,
+        vendorCodes: d.vendorCodes || 0, // Preserve original vendorCodes for now
         exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : []
       } : d));
       setSelectedDictionaryForView(prev => prev ? {
@@ -332,11 +335,14 @@ export default function DictionariesPage() {
     }
   };
 
-  const renderAttributeValue = (value: string[] | AttributeEnum[] | undefined): string => {
+  const renderAttributeValue = (value: (string | ParsedEnum)[] | undefined): string => {
     if (!value || value.length === 0) return 'N/A';
-    if (typeof value[0] === 'string') return (value as string[]).join(', ');
-    return (value as AttributeEnum[]).map(e => `${e.name} (${e.value})`).join(', ');
+    return value.map(e => {
+        if (typeof e === 'string') return e;
+        return `${e.name} (${e.value})`; // Assuming e is ParsedEnum
+    }).join(', ');
   };
+
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -436,7 +442,7 @@ export default function DictionariesPage() {
     <div className="space-y-8">
       <PageHeader
         title="RADIUS Dictionary Manager"
-        description="Manage dictionaries, import content, and toggle their active status."
+        description="Manage dictionaries, import content, and toggle their active status. AI parsing for imported files is best for self-contained vendor dictionaries and does not handle $INCLUDE."
         actions={
           <div className="flex gap-2">
             {selectedDictionaryIds.length > 0 && (
@@ -539,7 +545,7 @@ export default function DictionariesPage() {
                     onCheckedChange={handleSelectAll}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
-                    indeterminate={isSomeSelected}
+                    indeterminate={isSomeSelected ? true : undefined}
                   />
                 </TableHead>
                 <TableHead>Name</TableHead>
