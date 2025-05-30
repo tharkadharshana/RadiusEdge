@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState } from "react"; // Explicit React import
+import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11,9 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Upload, AlertTriangle, CheckCircle, FileJson, FileTerminal, FileCode, Loader2, Save } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
-import type { RadiusPacket } from '@/app/packets/page';
+import type { RadiusPacket, RadiusAttribute } from '@/app/packets/page';
 
-interface ParsedAttributeUI { // Renamed to avoid conflict if RadiusAttribute is also imported
+interface ParsedAttributeUI {
   id: string;
   name: string;
   value: string;
@@ -37,7 +37,7 @@ export default function ImportPage() {
 
   const { toast } = useToast();
 
-  const handleParsePacketData = async () => {
+  async function handleParsePacketData() {
     if (!rawInput.trim()) {
       toast({ title: "Input Empty", description: "Please paste packet data to parse.", variant: "destructive" });
       return;
@@ -50,39 +50,57 @@ export default function ImportPage() {
     try {
       let attributesTextToParse = rawInput;
       let localRadclientParams: RadclientParams = {};
-      let localDetectedFormat = "Raw Attributes";
+      let currentDetectedFormat = "Raw Attributes";
 
-      const radclientRegex = /echo\s*"(.*?)"\s*\|\s*radclient\s*(-x)?\s*([\w.-]+)(?::(\d+))?\s*(auth|acct|status|disconnect)\s*([\w.-]+)((?:\s+-\w+(?:\s+[\w.:-]+)?)*)/is;
+      // Regex to capture attributes within echo and radclient parameters
+      // Updated regex to be more robust for options
+      const radclientRegex = /echo\s*"(.*?)"\s*\|\s*radclient\s*(-x)?\s*([\w.-]+)(?::(\d+))?\s*(auth|acct|status|disconnect)\s*([\w.-]+)((?:\s+-\w+(?:\s+[\w.:/-]+)?)*)/is;
       const radclientMatch = rawInput.match(radclientRegex);
 
       if (radclientMatch) {
-        localDetectedFormat = "radclient Command";
-        attributesTextToParse = radclientMatch[1].trim(); 
+        currentDetectedFormat = "radclient Command";
+        // Attributes are in radclientMatch[1], unescape newlines if they were escaped for echo
+        attributesTextToParse = radclientMatch[1].replace(/\\n/g, '\n').trim();
         localRadclientParams.server = radclientMatch[3];
-        localRadclientParams.port = radclientMatch[4] || (radclientMatch[5] === 'acct' ? '1813' : '1812');
+        localRadclientParams.port = radclientMatch[4] || (radclientMatch[5] === 'acct' || radclientMatch[5] === 'disconnect' ? '1813' : '1812'); // common defaults
         localRadclientParams.type = radclientMatch[5] as RadclientParams['type'];
         localRadclientParams.secret = radclientMatch[6];
-        localRadclientParams.options = radclientMatch[7] ? radclientMatch[7].trim().split(/\s+/) : [];
-        if (radclientMatch[2]) localRadclientParams.options.unshift('-x');
+        // Process options, splitting by space but keeping options with their values together
+        const optionsString = radclientMatch[7] ? radclientMatch[7].trim() : "";
+        const optionsArray: string[] = [];
+        if (optionsString) {
+            // This regex attempts to split options correctly, e.g. -t 5 or -f /path/to/file
+            const optionRegex = /(-\w+(?:\s+(?:[\w.:/-]+|"[^"]*"|'[^']*'))?)/g;
+            let match;
+            while((match = optionRegex.exec(optionsString)) !== null) {
+                optionsArray.push(match[1].trim());
+            }
+        }
+        localRadclientParams.options = optionsArray;
+
+        if (radclientMatch[2]) { // if -x was present
+          localRadclientParams.options.unshift('-x');
+        }
+
       } else if (rawInput.trim().startsWith('{') || rawInput.trim().startsWith('[')) {
-        localDetectedFormat = "JSON";
+        currentDetectedFormat = "JSON";
         try {
           const jsonData = JSON.parse(rawInput.trim());
           let attributesToSet: ParsedAttributeUI[] = [];
           if (Array.isArray(jsonData) && jsonData.every(attr => typeof attr.name === 'string' && typeof attr.value === 'string')) {
             attributesToSet = jsonData.map((attr, idx) => ({ id: `attr_json_${idx}_${Date.now()}`, name: attr.name, value: attr.value }));
-          } else if (jsonData.attributes && Array.isArray(jsonData.attributes) && jsonData.attributes.every((attr: any) => typeof attr.name === 'string' && typeof attr.value === 'string')) {
+          } else if (typeof jsonData === 'object' && jsonData !== null && jsonData.attributes && Array.isArray(jsonData.attributes) && jsonData.attributes.every((attr: any) => typeof attr.name === 'string' && typeof attr.value === 'string')) {
              attributesToSet = jsonData.attributes.map((attr: any, idx: number) => ({ id: `attr_json_pkt_${idx}_${Date.now()}`, name: attr.name, value: attr.value }));
           } else {
             throw new Error("JSON data is not in a recognized attribute array or packet format (expected array of {name, value} or object with 'attributes' array).");
           }
           setParsedAttributes(attributesToSet);
-          setDetectedFormat(localDetectedFormat);
-          setRadclientParams(localRadclientParams.server ? localRadclientParams : null);
+          setDetectedFormat(currentDetectedFormat);
+          setRadclientParams(localRadclientParams.server ? localRadclientParams : null); // Only set if radclient was partially matched
           setIsLoading(false);
-          toast({ title: "Data Parsed", description: `Detected format: ${localDetectedFormat}. ${attributesToSet.length} attributes parsed successfully.` });
+          toast({ title: "Data Parsed", description: `Detected format: ${currentDetectedFormat}. ${attributesToSet.length} attributes parsed successfully.` });
           return;
-        } catch (jsonError) {
+        } catch (jsonError: any) {
           toast({ title: "JSON Parsing Error", description: (jsonError as Error).message, variant: "destructive" });
           setIsLoading(false);
           return;
@@ -93,22 +111,22 @@ export default function ImportPage() {
       const result: ParseRadiusAttributesOutput = await parseRadiusAttributesFromString(parseInput);
 
       setParsedAttributes(result.parsedAttributes.map((pa, index) => ({ id: `attr_${index}_${Date.now()}`, name: pa.name, value: pa.value })));
-      setDetectedFormat(localDetectedFormat);
+      setDetectedFormat(currentDetectedFormat);
       setRadclientParams(localRadclientParams.server ? localRadclientParams : null);
-      toast({ title: "Data Parsed", description: `Detected format: ${localDetectedFormat}. ${result.parsedAttributes.length} attributes found.` });
+      toast({ title: "Data Parsed", description: `Detected format: ${currentDetectedFormat}. ${result.parsedAttributes.length} attributes found.` });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error parsing packet data:", error);
-      toast({ title: "Parsing Failed", description: "Could not parse packet data. Check format or AI flow.", variant: "destructive" });
+      toast({ title: "Parsing Failed", description: error.message || "Could not parse packet data. Check format or AI flow.", variant: "destructive" });
       setParsedAttributes([]);
       setDetectedFormat(null);
       setRadclientParams(null);
     } finally {
       setIsLoading(false);
     }
-  };
+  }
 
-  const handleSaveToLibrary = async () => {
+  async function handleSaveToLibrary() {
     if (!parsedAttributes.length) {
       toast({ title: "No Attributes", description: "Cannot save an empty packet.", variant: "destructive" });
       return;
@@ -116,18 +134,12 @@ export default function ImportPage() {
     setIsSaving(true);
     const packetName = `Imported Packet - ${new Date().toLocaleString()}`;
     const packetDescription = `Imported from ${detectedFormat || 'pasted data'}${radclientParams?.server ? ` (radclient target: ${radclientParams.server})` : ''}`;
-    
-    // Construct attributes for saving, ensuring they match RadiusAttribute structure if necessary
-    // For POST /api/packets, it expects an array of simple {name, value} pairs for attributes.
-    // The 'id' for attributes within a packet is typically managed client-side when editing,
-    // but for a new packet, it might not be needed or can be generated on save if the backend expects it.
-    // The current API expects {id, name, value} for attributes array, so client-generated ID is fine.
-    const attributesToSave = parsedAttributes.map(attr => ({
-      id: attr.id, // Use the client-generated ID
+
+    const attributesToSave: RadiusAttribute[] = parsedAttributes.map(attr => ({
+      id: attr.id, // This ID is client-generated, backend will create its own
       name: attr.name,
       value: attr.value,
     }));
-
 
     const newPacketData: Omit<RadiusPacket, 'id' | 'lastModified'> = {
       name: packetName,
@@ -149,7 +161,8 @@ export default function ImportPage() {
       }
       const savedPacket = await response.json();
       toast({ title: "Packet Saved", description: `Packet "${savedPacket.name}" added to library.` });
-      
+
+      // Clear inputs after successful save
       setRawInput('');
       setParsedAttributes([]);
       setDetectedFormat(null);
@@ -160,14 +173,14 @@ export default function ImportPage() {
     } finally {
       setIsSaving(false);
     }
-  };
+  }
 
-  const getFormatIcon = (format: string | null) => {
+  function getFormatIcon(format: string | null) {
     if (!format) return FileCode;
     if (format.toLowerCase().includes("radclient")) return FileTerminal;
     if (format.toLowerCase().includes("json")) return FileJson;
     return FileCode;
-  };
+  }
 
   return (
     <div className="space-y-8">
