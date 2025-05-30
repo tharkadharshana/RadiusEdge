@@ -33,12 +33,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { testDbValidation, TestDbValidationInput, TestDbValidationOutput, DbSshPreambleStepClient, DbValidationStepClient } from '@/ai/flows/test-db-validation-flow';
+import { testDbValidation, TestDbValidationInput, TestDbValidationOutput, DbValidationStepClient } from '@/ai/flows/test-db-validation-flow';
 
 
 type DbStatus = 'connected_validated' | 'connected_issues' | 'connection_error' | 'validation_error' | 'unknown' | 'testing';
 
-interface DbSshPreambleStepConfig {
+interface DbSshPreambleStepConfig { // This structure remains for defining the preamble
   id: string;
   name: string;
   command: string;
@@ -52,7 +52,7 @@ interface DbValidationStepConfig {
   type: 'sql' | 'ssh';
   commandOrQuery: string;
   isEnabled: boolean;
-  isMandatory: boolean; // For UI to prevent deletion of core steps
+  isMandatory: boolean; 
   expectedOutputContains?: string;
 }
 
@@ -63,10 +63,10 @@ interface DbConnectionConfig {
   host: string;
   port: number;
   username: string;
-  password?: string; // Added for completeness, use with care
+  password?: string; 
   databaseName: string;
   status?: DbStatus;
-  sshPreambleSteps: DbSshPreambleStepConfig[];
+  sshPreambleSteps: DbSshPreambleStepConfig[]; // For scenarios, not for immediate test
   validationSteps: DbValidationStepConfig[];
 }
 
@@ -88,7 +88,7 @@ const initialDbConfigs: DbConnectionConfig[] = [
   },
   { 
     id: 'db2', name: 'Session Store (Postgres)', type: 'postgresql', host: 'pg.example.com', port: 5432, username: 'session_checker', databaseName: 'active_sessions', status: 'unknown',
-    sshPreambleSteps: [],
+    sshPreambleSteps: [], // No SSH preamble defined for this one
     validationSteps: getDefaultDbValidationSteps(),
   },
 ];
@@ -104,7 +104,7 @@ export default function DatabaseValidationPage() {
 
 
   const handleEditConfig = (config: DbConnectionConfig | null) => {
-    setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null); // Deep copy
+    setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null); 
   };
 
   const handleSaveConfig = () => {
@@ -135,7 +135,6 @@ export default function DatabaseValidationPage() {
     });
   };
 
-  // --- SSH Preamble Step Management ---
   const handleSshPreambleStepChange = (index: number, field: keyof DbSshPreambleStepConfig, value: any) => {
     if (editingConfig) {
       const updatedSteps = [...editingConfig.sshPreambleSteps];
@@ -151,7 +150,7 @@ export default function DatabaseValidationPage() {
   const addSshPreambleStep = () => {
     if (editingConfig) {
       const newStep: DbSshPreambleStepConfig = {
-        id: `db_ssh_pre_custom_${Date.now()}`, name: 'New SSH Preamble Step', command: '', isEnabled: true, expectedOutputContains: ''
+        id: `db_ssh_pre_custom_${Date.now()}`, name: 'New Scenario SSH Step', command: '', isEnabled: true, expectedOutputContains: ''
       };
       setEditingConfig({ ...editingConfig, sshPreambleSteps: [...editingConfig.sshPreambleSteps, newStep] });
     }
@@ -163,18 +162,15 @@ export default function DatabaseValidationPage() {
     }
   };
 
-  // --- DB Validation Step Management ---
   const handleValidationStepChange = (index: number, field: keyof DbValidationStepConfig, value: any) => {
     if (editingConfig) {
       const updatedSteps = [...editingConfig.validationSteps];
-      if (field === 'isEnabled' || field === 'isMandatory') { // isMandatory should not be changed by user for default steps
+      if (field === 'isEnabled' || field === 'isMandatory') { 
         (updatedSteps[index] as any)[field] = Boolean(value);
       } else if (field === 'type') {
          (updatedSteps[index] as any)[field] = value;
-         // Potentially clear commandOrQuery or expectedOutputContains if type changes
          updatedSteps[index].commandOrQuery = "";
          updatedSteps[index].expectedOutputContains = "";
-
       }
       else {
         (updatedSteps[index] as any)[field] = value;
@@ -211,9 +207,6 @@ export default function DatabaseValidationPage() {
     setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'testing' } : c));
 
     try {
-        const preambleClientSteps: DbSshPreambleStepClient[] = configToTest.sshPreambleSteps.map(s => ({
-            name: s.name, command: s.command, isEnabled: s.isEnabled, expectedOutputContains: s.expectedOutputContains
-        }));
         const validationClientSteps: DbValidationStepClient[] = configToTest.validationSteps.map(s => ({
             name: s.name, type: s.type, commandOrQuery: s.commandOrQuery, isEnabled: s.isEnabled, isMandatory: s.isMandatory, expectedOutputContains: s.expectedOutputContains
         }));
@@ -224,9 +217,9 @@ export default function DatabaseValidationPage() {
             dbHost: configToTest.host,
             dbPort: configToTest.port,
             dbUsername: configToTest.username,
-            dbPassword: configToTest.password || '', // Send empty if undefined
+            dbPassword: configToTest.password || '', 
             dbName: configToTest.databaseName,
-            sshPreambleSteps: preambleClientSteps,
+            // SSH Preamble steps are NOT sent for this specific test
             validationSteps: validationClientSteps,
         };
         const result = await testDbValidation(input);
@@ -235,7 +228,8 @@ export default function DatabaseValidationPage() {
         let newStatus: DbStatus = 'unknown';
         if (result.overallStatus === 'success') newStatus = 'connected_validated';
         else if (result.overallStatus === 'partial_success') newStatus = 'connected_issues';
-        else if (result.overallStatus === 'preamble_failure' || result.overallStatus === 'connection_failure') newStatus = 'connection_error';
+        // 'preamble_failure' is no longer a possible overallStatus from this flow
+        else if (result.overallStatus === 'connection_failure') newStatus = 'connection_error';
         else if (result.overallStatus === 'validation_failure') newStatus = 'validation_error';
         
         setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: newStatus } : c));
@@ -265,7 +259,7 @@ export default function DatabaseValidationPage() {
     <div className="space-y-8">
       <PageHeader
         title="Database Validation Setup"
-        description="Configure connections to external databases for validating test results. Includes simulated SSH preambles and multi-step validation sequences."
+        description="Configure DB connections for result validation. SSH preambles defined here are for scenario execution, not this page's test."
         actions={
           <Button onClick={createNewConfig}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add DB Connection
@@ -334,7 +328,7 @@ export default function DatabaseValidationPage() {
                 {editingConfig?.id === 'new' ? 'Add New Database Connection' : `Edit Connection: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Provide connection details, optional SSH preamble, and validation steps. Simulations are used for SSH and query execution.
+              Configure DB details. The SSH Preamble is for scenarios using this DB. The Validation Sequence tests the DB directly.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
@@ -383,8 +377,8 @@ export default function DatabaseValidationPage() {
               </fieldset>
 
               <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">Pre-Validation SSH Preamble (Simulated)</legend>
-                <p className="text-xs text-muted-foreground mt-1 mb-3">Define SSH commands to simulate before DB validation (e.g., for bastion hosts, tunnels).</p>
+                <legend className="text-sm font-medium px-1">Scenario SSH Preamble (Simulated - for scenarios using this DB)</legend>
+                <p className="text-xs text-muted-foreground mt-1 mb-3">Define SSH commands to (simulatively) run before scenarios access this database (e.g., for bastion hosts, tunnels). Not run by 'Test Connection & Validation' button.</p>
                 <div className="space-y-3">
                   {(editingConfig.sshPreambleSteps || []).map((step, index) => (
                     <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
@@ -401,16 +395,16 @@ export default function DatabaseValidationPage() {
                       <Input id={`preamble-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder="e.g., 'Connection established'"/>
                     </Card>
                   ))}
-                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add SSH Preamble Step</Button>
+                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Scenario SSH Step</Button>
                 </div>
               </fieldset>
               
               <fieldset className="border p-4 rounded-md">
                 <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
-                    <span>Validation Sequence (Simulated)</span>
+                    <span>Validation Sequence (Simulated - for 'Test Connection & Validation')</span>
                     <div className="flex gap-2">
                         <Button variant="outline" size="sm" onClick={() => addValidationStep('sql')}><PlusCircle className="mr-2 h-4 w-4" /> Add SQL Step</Button>
-                        <Button variant="outline" size="sm" onClick={() => addValidationStep('ssh')}><PlusCircle className="mr-2 h-4 w-4" /> Add SSH Step</Button>
+                        <Button variant="outline" size="sm" onClick={() => addValidationStep('ssh')}><PlusCircle className="mr-2 h-4 w-4" /> Add SSH (on DB Host) Step</Button>
                     </div>
                 </legend>
                 <div className="space-y-3 mt-3">
@@ -425,8 +419,8 @@ export default function DatabaseValidationPage() {
                           {!step.isMandatory && <Button variant="ghost" size="icon" onClick={() => removeValidationStep(index)} className="text-destructive hover:text-destructive h-7 w-7"><Trash2 className="h-4 w-4" /></Button>}
                         </div>
                       </div>
-                      <Label htmlFor={`val-step-cmd-${index}`} className="text-xs text-muted-foreground">{step.type === 'sql' ? 'SQL Query' : 'Simulated SSH Command'}</Label>
-                      <Textarea id={`val-step-cmd-${index}`} value={step.commandOrQuery} onChange={(e) => handleValidationStepChange(index, 'commandOrQuery', e.target.value)} rows={step.type === 'sql' ? 2 : 1} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "SELECT * FROM sessions WHERE id = '...'" : "grep 'ERROR' /var/log/radius.log"}/>
+                      <Label htmlFor={`val-step-cmd-${index}`} className="text-xs text-muted-foreground">{step.type === 'sql' ? 'SQL Query' : 'Simulated SSH Command (on DB host)'}</Label>
+                      <Textarea id={`val-step-cmd-${index}`} value={step.commandOrQuery} onChange={(e) => handleValidationStepChange(index, 'commandOrQuery', e.target.value)} rows={step.type === 'sql' ? 2 : 1} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "SELECT * FROM sessions WHERE id = '...'" : "grep 'ERROR' /var/log/db.log"}/>
                       <Label htmlFor={`val-step-expect-${index}`} className="text-xs text-muted-foreground mt-2">Expected Output Contains (Optional)</Label>
                       <Input id={`val-step-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleValidationStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "e.g., 'status=active' or '1 rows selected'" : "e.g., 'script_completed_successfully'"}/>
                     </Card>
@@ -452,8 +446,8 @@ export default function DatabaseValidationPage() {
           <DialogHeader>
             <DialogTitle>DB Test Results: {configs.find(c => c.id === testingDbId)?.name}</DialogTitle>
             <DialogDescription>
-              Showing (simulated) results of the SSH preamble, DB connection, and validation sequence.
-              <span className="font-semibold text-destructive"> This is a simulation; no actual SSH or DB queries were run.</span>
+              Showing (simulated) results of the DB connection and validation sequence.
+              <span className="font-semibold text-destructive"> This is a simulation; no actual DB queries were run.</span>
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-[60vh] pr-4 py-4">
@@ -467,28 +461,15 @@ export default function DatabaseValidationPage() {
               <div className="space-y-4">
                 <div><span className="font-semibold">Overall Status:</span> <Badge variant={
                     testDbResult.overallStatus === 'success' ? 'default' : 
-                    testDbResult.overallStatus === 'preamble_failure' || testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure' ? 'destructive' :
+                    testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure' ? 'destructive' :
                     'secondary'
                 } className={cn(
                     testDbResult.overallStatus === 'success' && 'bg-green-500 hover:bg-green-600',
-                    (testDbResult.overallStatus === 'preamble_failure' || testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure') && 'bg-red-500 hover:bg-red-600',
+                    (testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure') && 'bg-red-500 hover:bg-red-600',
                     testDbResult.overallStatus === 'partial_success' && 'bg-yellow-500 hover:bg-yellow-600'
                 )}>{testDbResult.overallStatus.replace(/_/g, ' ').toUpperCase()}</Badge></div>
 
-                {testDbResult.preambleStepResults && testDbResult.preambleStepResults.length > 0 && (
-                    <Card><CardHeader><CardTitle className="text-lg">SSH Preamble Steps</CardTitle></CardHeader>
-                    <CardContent className="space-y-2">
-                    {testDbResult.preambleStepResults.map((step, idx) => (
-                        <Card key={`preamble-${idx}`} className="overflow-hidden">
-                           <CardHeader className={cn("p-3 flex flex-row items-center justify-between", step.status === 'success' && 'bg-green-500/10', step.status === 'failure' && 'bg-red-500/10', step.status === 'skipped' && 'bg-gray-500/10')}>
-                                <div className="flex items-center gap-2"><h4 className="font-medium">{step.stepName}</h4></div>
-                                <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600', step.status === 'failure' && 'bg-red-600')}>{step.status}</Badge>
-                            </CardHeader>
-                            {(step.output || step.error || step.command) && <CardContent className="p-3 text-xs bg-muted/30"><p className="text-muted-foreground font-mono mb-1">Simulated: <code className="text-foreground bg-background/50 px-1 rounded">{step.command}</code></p>{step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}{step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 bg-red-500/10 p-2 rounded mt-1">{step.error}</pre>}</CardContent>}
-                        </Card>
-                    ))}
-                    </CardContent></Card>
-                )}
+                {/* SSH Preamble results are no longer part of this dialog */}
 
                 <Card><CardHeader><CardTitle className="text-lg">Database Connection</CardTitle></CardHeader>
                 <CardContent>
@@ -507,7 +488,13 @@ export default function DatabaseValidationPage() {
                                 <div className="flex items-center gap-2"><h4 className="font-medium">{step.stepName} <Badge variant="outline" className="text-xs">{step.type}</Badge></h4></div>
                                 <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600', step.status === 'failure' && 'bg-red-600')}>{step.status}</Badge>
                             </CardHeader>
-                            {(step.output || step.error || step.commandOrQuery) && <CardContent className="p-3 text-xs bg-muted/30"><p className="text-muted-foreground font-mono mb-1">Simulated {step.type === 'sql' ? 'Query' : 'Command'}: <code className="text-foreground bg-background/50 px-1 rounded">{step.commandOrQuery}</code></p>{step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}{step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 bg-red-500/10 p-2 rounded mt-1">{step.error}</pre>}</CardContent>}
+                            {(step.output || step.error || (step.type === 'sql' ? step.query : step.command) ) && 
+                                <CardContent className="p-3 text-xs bg-muted/30">
+                                    <p className="text-muted-foreground font-mono mb-1">Simulated {step.type === 'sql' ? 'Query' : 'Command'}: <code className="text-foreground bg-background/50 px-1 rounded">{step.type === 'sql' ? step.query : step.command}</code></p>
+                                    {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
+                                    {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 bg-red-500/10 p-2 rounded mt-1">{step.error}</pre>}
+                                </CardContent>
+                            }
                         </Card>
                     ))}
                     </CardContent></Card>

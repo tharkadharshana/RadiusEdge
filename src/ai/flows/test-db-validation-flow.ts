@@ -2,8 +2,9 @@
 // src/ai/flows/test-db-validation-flow.ts
 'use server';
 /**
- * @fileOverview An AI agent that simulates testing a Database connection,
- * an optional SSH preamble, and a sequence of validation steps (SQL queries or SSH commands).
+ * @fileOverview An AI agent that simulates testing a Database connection
+ * and a sequence of validation steps (SQL queries or SSH commands on the DB host).
+ * The SSH preamble for scenario execution is defined with the DB config but not run by this specific test flow.
  *
  * - testDbValidation - A function that simulates the DB validation process.
  * - TestDbValidationInput - The input type for the testDbValidation function.
@@ -14,14 +15,6 @@ import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
 // --- Input Schemas ---
-const DbSshPreambleStepClientSchema = z.object({
-  name: z.string().describe('User-defined name of the SSH preamble step.'),
-  command: z.string().describe('The SSH command to simulate.'),
-  isEnabled: z.boolean().describe('Whether this step should be executed.'),
-  expectedOutputContains: z.string().optional().describe('Substring expected in simulated output for success.'),
-});
-export type DbSshPreambleStepClient = z.infer<typeof DbSshPreambleStepClientSchema>;
-
 const DbValidationStepClientSchema = z.object({
   name: z.string().describe('User-defined name of the validation step.'),
   type: z.enum(['sql', 'ssh']).describe('Type of validation step.'),
@@ -40,7 +33,6 @@ const TestDbValidationInputSchema = z.object({
   dbUsername: z.string().describe('Database username.'),
   dbPassword: z.string().optional().describe('Database password (for simulation).'),
   dbName: z.string().describe('Name of the database.'),
-  sshPreambleSteps: z.array(DbSshPreambleStepClientSchema).optional().describe('Optional SSH commands to simulate before DB connection.'),
   validationSteps: z.array(DbValidationStepClientSchema).describe('Validation steps to simulate after DB connection.'),
 });
 export type TestDbValidationInput = z.infer<typeof TestDbValidationInputSchema>;
@@ -60,9 +52,8 @@ export type StepResult = z.infer<typeof StepResultSchema>;
 
 
 const TestDbValidationOutputSchema = z.object({
-  overallStatus: z.enum(['success', 'partial_success', 'validation_failure', 'connection_failure', 'preamble_failure', 'testing'])
+  overallStatus: z.enum(['success', 'partial_success', 'validation_failure', 'connection_failure', 'testing'])
     .describe('Overall status of the DB validation test.'),
-  preambleStepResults: z.array(StepResultSchema).optional().describe('Results of SSH preamble steps.'),
   dbConnectionStatus: z.enum(['success', 'failure', 'skipped']).describe('Status of the simulated DB connection attempt.'),
   dbConnectionError: z.string().optional().describe('Error message if DB connection failed.'),
   validationStepResults: z.array(StepResultSchema).optional().describe('Results of DB validation steps.'),
@@ -81,38 +72,6 @@ function interpolateDbCommand(command: string, dbInfo: Pick<TestDbValidationInpu
     interpolated = interpolated.replace(/\$\{dbName\}/g, dbInfo.dbName);
     interpolated = interpolated.replace(/\$\{dbType\}/g, dbInfo.dbType);
     return interpolated;
-}
-
-async function simulateSshStep(stepConfig: DbSshPreambleStepClient, dbInfo: Pick<TestDbValidationInput, 'dbHost' | 'dbUsername' | 'dbPort' | 'dbName' | 'dbType'>): Promise<StepResult> {
-    const command = interpolateDbCommand(stepConfig.command, dbInfo);
-    await simulateDelay(200 + Math.random() * 500);
-    let simulatedOutput = `Simulated SSH output for: ${command}\n...`;
-    let simulatedError;
-    let isSuccess = Math.random() < 0.9; // 90% success rate for generic SSH
-
-    if (command.toLowerCase().includes('ssh ')) {
-        simulatedOutput = `Connected to mock host via SSH: ${command.split(' ')[1] || dbInfo.dbHost}`;
-    } else {
-        simulatedOutput = `Executed generic SSH command: ${command}\nOutput: Operation completed.`;
-    }
-
-    if (!isSuccess) {
-        simulatedError = `Simulated SSH error for command: ${command}`;
-        simulatedOutput = `Failed to execute SSH command: ${command}.`;
-    }
-
-    if (stepConfig.expectedOutputContains) {
-        if (isSuccess && simulatedOutput.includes(stepConfig.expectedOutputContains)) {
-            isSuccess = true;
-        } else {
-            isSuccess = false;
-            if (!simulatedError) {
-                simulatedError = `Expected output "${stepConfig.expectedOutputContains}" not found in SSH output.`;
-                simulatedOutput += `\n[VALIDATION] Expected output check failed.`;
-            }
-        }
-    }
-    return { stepName: stepConfig.name, status: isSuccess ? 'success' : 'failure', output: simulatedOutput, error: simulatedError, command, type: 'ssh' };
 }
 
 async function simulateDbValidationStep(stepConfig: DbValidationStepClient, dbInfo: Pick<TestDbValidationInput, 'dbHost' | 'dbUsername' | 'dbPort' | 'dbName' | 'dbType'>): Promise<StepResult> {
@@ -169,55 +128,37 @@ async function simulateDbValidationStep(stepConfig: DbValidationStepClient, dbIn
 export async function testDbValidation(input: TestDbValidationInput): Promise<TestDbValidationOutput> {
   const output: TestDbValidationOutput = {
     overallStatus: 'testing',
-    preambleStepResults: [],
     dbConnectionStatus: 'skipped',
     validationStepResults: [],
   };
 
-  let haltPreamble = false;
-  if (input.sshPreambleSteps && input.sshPreambleSteps.length > 0) {
-    for (const stepConfig of input.sshPreambleSteps) {
-      if (haltPreamble) {
-        output.preambleStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.command, type: 'ssh', output: 'Skipped due to previous preamble failure.' });
-        continue;
-      }
-      if (!stepConfig.isEnabled) {
-        output.preambleStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.command, type: 'ssh', output: 'Step disabled by user.' });
-        continue;
-      }
-      const result = await simulateSshStep(stepConfig, input);
-      output.preambleStepResults?.push(result);
-      if (result.status === 'failure') {
-        haltPreamble = true;
-      }
-    }
-  }
-
-  if (haltPreamble) {
-    output.overallStatus = 'preamble_failure';
-    output.dbConnectionStatus = 'skipped'; // Skip DB connection if preamble failed
-    // Also skip validation steps if preamble failed
-    if (input.validationSteps && input.validationSteps.length > 0) {
-        input.validationSteps.forEach(stepConfig => {
-            output.validationStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, type: stepConfig.type, output: 'Skipped due to preamble failure.' });
-        });
-    }
-    return output;
-  }
-
   // Simulate DB Connection
   await simulateDelay(300 + Math.random() * 700);
-  const dbConnectSuccess = Math.random() < 0.9; // 90% success
+  // Simulate a connection failure ~10% of the time for demo purposes.
+  // Specific conditions for failure (e.g. bad host, wrong port) can be added here for more deterministic simulation if needed.
+  let dbConnectSuccess = Math.random() < 0.9; 
+  if (input.dbHost.includes("failconnect")) {
+    dbConnectSuccess = false;
+  }
+
+
   if (dbConnectSuccess) {
     output.dbConnectionStatus = 'success';
   } else {
     output.dbConnectionStatus = 'failure';
-    output.dbConnectionError = `Simulated: Failed to connect to ${input.dbType} server ${input.dbHost}:${input.dbPort} as ${input.dbUsername}.`;
+    output.dbConnectionError = `Simulated: Failed to connect to ${input.dbType} server ${input.dbHost}:${input.dbPort} as ${input.dbUsername}. Check connection details.`;
     output.overallStatus = 'connection_failure';
     // Also skip validation steps if DB connection failed
     if (input.validationSteps && input.validationSteps.length > 0) {
         input.validationSteps.forEach(stepConfig => {
-            output.validationStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, type: stepConfig.type, output: 'Skipped due to DB connection failure.' });
+            output.validationStepResults?.push({ 
+                stepName: stepConfig.name, 
+                status: 'skipped', 
+                command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, 
+                query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, 
+                type: stepConfig.type, 
+                output: 'Skipped due to DB connection failure.' 
+            });
         });
     }
     return output;
@@ -227,46 +168,58 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
   if (input.validationSteps && input.validationSteps.length > 0) {
     for (const stepConfig of input.validationSteps) {
       if (haltValidation) {
-        output.validationStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, type: stepConfig.type, output: 'Skipped due to previous validation failure.' });
+        output.validationStepResults?.push({ 
+            stepName: stepConfig.name, 
+            status: 'skipped', 
+            command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, 
+            query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, 
+            type: stepConfig.type, 
+            output: 'Skipped due to previous validation failure.' 
+        });
         continue;
       }
       if (!stepConfig.isEnabled) {
-        output.validationStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, type: stepConfig.type, output: 'Step disabled by user.' });
+        output.validationStepResults?.push({ 
+            stepName: stepConfig.name, 
+            status: 'skipped', 
+            command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, 
+            query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, 
+            type: stepConfig.type, 
+            output: 'Step disabled by user.' 
+        });
         continue;
       }
       const result = await simulateDbValidationStep(stepConfig, input);
       output.validationStepResults?.push(result);
       if (result.status === 'failure') {
-        haltValidation = true;
+        haltValidation = true; // Stop further validation steps if one fails
       }
     }
   }
 
   // Determine overall status based on collected results
-  if (output.preambleStepResults?.some(r => r.status === 'failure')) {
-      output.overallStatus = 'preamble_failure';
-  } else if (output.dbConnectionStatus === 'failure') {
+  if (output.dbConnectionStatus === 'failure') {
       output.overallStatus = 'connection_failure';
   } else if (output.validationStepResults?.some(r => r.status === 'failure')) {
       output.overallStatus = 'validation_failure';
   } else {
-      // Check if there were any actual enabled steps to run
-      const anyEnabledPreamble = input.sshPreambleSteps?.some(s => s.isEnabled) ?? false;
+      // Check if there were any actual enabled validation steps to run
       const anyEnabledValidation = input.validationSteps?.some(s => s.isEnabled) ?? false;
-      const anyEnabledSteps = anyEnabledPreamble || anyEnabledValidation;
 
-      if (!anyEnabledSteps && output.dbConnectionStatus === 'success') {
-           // Connected, but no preamble or validation steps were enabled to run
+      if (!anyEnabledValidation && output.dbConnectionStatus === 'success') {
+           // Connected, but no validation steps were enabled to run
           output.overallStatus = 'success'; // Consider success if only DB connection was tested and it passed
-      } else if (anyEnabledSteps && output.validationStepResults?.filter(r => {
+      } else if (anyEnabledValidation && output.validationStepResults?.filter(r => {
           const originalStep = input.validationSteps.find(s => s.name === r.stepName);
-          return originalStep?.isEnabled;
-      }).every(r => r.status === 'success' || r.status === 'skipped')) {
+          return originalStep?.isEnabled; // Check against original step's enabled status
+      }).every(r => r.status === 'success' || r.status === 'skipped' /* skipped due to user disabling is fine */)) {
           output.overallStatus = 'success';
       } else if (output.overallStatus === 'testing') { // If still testing, it means no failures and db connection was successful
           output.overallStatus = 'success';
       } else {
-          // This case should ideally be caught by specific failure statuses
+          // This case might be hit if some steps were skipped (not due to failure or user disabling)
+          // or if no enabled steps led to an overall success determination.
+          // For instance, if all steps were disabled by user.
           output.overallStatus = 'partial_success'; 
       }
   }
@@ -284,7 +237,6 @@ const testDbValidationInternalFlow = ai.defineFlow(
   },
   async (input) => {
     // This internal flow directly calls the exported async function.
-    // This is a common pattern if the exported function already contains all the logic.
     return testDbValidation(input);
   }
 );
