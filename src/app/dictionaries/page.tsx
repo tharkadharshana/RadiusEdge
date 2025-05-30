@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { UploadCloud, Eye, Trash2, PlusCircle, Info, Loader2, Edit2, Save, FileText, FileUp, MoreHorizontal, CheckSquare, Square, ChevronsUpDown } from 'lucide-react';
+import { UploadCloud, Eye, Trash2, PlusCircle, Info, Loader2, Edit2, Save, FileText, FileUp, MoreHorizontal, CheckSquare, Square, ChevronsUpDown, Minus } from 'lucide-react'; // Added Minus just in case, though Checkbox component handles it
 import {
   Dialog,
   DialogContent,
@@ -83,7 +83,7 @@ export default function DictionariesPage() {
 
   const { toast } = useToast();
 
-  const fetchDictionaries = async () => {
+  const fetchDictionaries = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await fetch('/api/dictionaries');
@@ -101,9 +101,12 @@ export default function DictionariesPage() {
       const data: Dictionary[] = await response.json();
       setDictionaries(data.map(d => ({ 
         ...d, 
-        attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : (d.attributes || 0), 
-        vendorCodes: d.vendorCodes || 0,
-        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [] 
+        // exampleAttributes should already be an array from the API if properly parsed.
+        // If it's a string, it means parsing failed or wasn't done by the API.
+        // The API GET routes were updated to parse this string into an array for `exampleAttributes`.
+        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [],
+        attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : (d.attributes || 0),
+        vendorCodes: d.vendorCodes || 0, 
       })));
     } catch (error) {
       console.error("Error fetching dictionaries (frontend catch):", error);
@@ -111,12 +114,11 @@ export default function DictionariesPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     fetchDictionaries();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchDictionaries]);
 
   const resetImportDialog = () => {
     setNewDictName('');
@@ -131,66 +133,73 @@ export default function DictionariesPage() {
   const handleImportDictionary = async () => {
     setIsSaving(true);
     try {
-      let response;
+      let requestBody: any = {};
+      let toastTitle = "Import Started";
+      let toastDescription = "Processing your dictionary import...";
+
       if (importMode === 'upload' && uploadedFiles && uploadedFiles.length > 0) {
-        toast({ title: "Bulk Import Started", description: `Preparing ${uploadedFiles.length} files for import. This may take a while...` });
-
-        const filesToUploadPromises = Array.from(uploadedFiles).map(async (file) => {
-          try {
-            const content = await file.text();
-            return { name: file.name, content };
-          } catch (readError) {
-            console.error(`Error reading file ${file.name}:`, readError);
-            toast({ title: "File Read Error", description: `Could not read file ${file.name}. It will be skipped or imported with empty content.`, variant: "destructive" });
-            return { name: file.name, content: '' };
-          }
-        });
-        const filesToUpload = await Promise.all(filesToUploadPromises);
-
-        response = await fetch('/api/dictionaries', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: filesToUpload }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || errorData.message || 'Failed to bulk import dictionary metadata');
+        if (uploadedFiles.length > 1) { // Bulk upload
+          toastTitle = "Bulk Import Started";
+          toastDescription = `Preparing ${uploadedFiles.length} files for import. This may take a while...`;
+          const filesToUploadPromises = Array.from(uploadedFiles).map(async (file) => {
+            try {
+              const content = await file.text();
+              return { name: file.name, content };
+            } catch (readError) {
+              console.error(`Error reading file ${file.name}:`, readError);
+              toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
+              return { name: file.name, content: '' }; // Send with empty content if read fails
+            }
+          });
+          requestBody.files = await Promise.all(filesToUploadPromises);
+        } else { // Single file upload
+          const file = uploadedFiles[0];
+          requestBody.rawContent = await file.text();
+          if (!newDictName) requestBody.name = file.name.split('.').slice(0, -1).join('.') || file.name;
+          else requestBody.name = newDictName;
+          if (!newDictSource) requestBody.source = "Uploaded File";
+          else requestBody.source = newDictSource;
+          toastDescription = `Importing file ${file.name}...`;
         }
-        const newDictionaries: Dictionary[] = await response.json();
-        toast({ title: "Bulk Import Processed", description: `${newDictionaries.length} dictionary entries created/updated.` });
-
-      } else {
-        let rawContent: string | undefined = undefined;
-        let nameForApi = newDictName;
-        let sourceForApi = newDictSource;
-
-        if (importMode === 'paste') {
-          rawContent = pastedDictContent;
-        } else if (importMode === 'upload' && uploadedFiles && uploadedFiles.length === 1) {
-          rawContent = await uploadedFiles[0].text();
-          if (!nameForApi) nameForApi = uploadedFiles[0].name.split('.').slice(0, -1).join('.') || uploadedFiles[0].name;
-          if (!sourceForApi) sourceForApi = "Uploaded File";
+      } else if (importMode === 'paste') {
+        if (!pastedDictContent.trim()) {
+          toast({ title: "No Content", description: "Please paste dictionary content.", variant: "destructive" });
+          setIsSaving(false); return;
         }
-
-        if (!nameForApi && importMode === 'manual' && !rawContent) {
-          toast({ title: "Missing Name", description: "Please provide a name for the dictionary, or content to parse from.", variant: "destructive" });
-          setIsSaving(false);
-          return;
+        requestBody.rawContent = pastedDictContent;
+        if (newDictName) requestBody.name = newDictName;
+        if (newDictSource) requestBody.source = newDictSource;
+        toastDescription = "Parsing pasted content...";
+      } else { // Manual mode
+        if (!newDictName) {
+          toast({ title: "Missing Name", description: "Please provide a name for the dictionary.", variant: "destructive" });
+          setIsSaving(false); return;
         }
-
-        response = await fetch('/api/dictionaries', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: nameForApi, source: sourceForApi, rawContent }),
-        });
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || errorData.message || 'Failed to import dictionary');
-        }
-        const newDictionary: Dictionary = await response.json();
-        toast({ title: "Dictionary Imported", description: `Dictionary "${newDictionary.name}" added/updated.` });
+        requestBody.name = newDictName;
+        requestBody.source = newDictSource || "Manually Created";
+        toastDescription = `Creating dictionary ${newDictName}...`;
       }
+      
+      toast({ title: toastTitle, description: toastDescription});
+
+      const response = await fetch('/api/dictionaries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: "Unknown error during import."}));
+        throw new Error(errorData.error || errorData.message || 'Failed to import dictionary/dictionaries');
+      }
+      
+      const resultData = await response.json();
+      if (Array.isArray(resultData)) { // Bulk import response
+         toast({ title: "Bulk Import Processed", description: `${resultData.length} dictionary entries created/updated.` });
+      } else { // Single import response
+         toast({ title: "Dictionary Imported", description: `Dictionary "${resultData.name}" added/updated.` });
+      }
+
       resetImportDialog();
       fetchDictionaries();
       setSelectedDictionaryIds([]);
@@ -220,15 +229,15 @@ export default function DictionariesPage() {
       const updatedDict: Dictionary = await response.json();
       setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? {
         ...updatedDict,
-        attributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes.length : 0,
-        vendorCodes: d.vendorCodes || 0,
-        exampleAttributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes : []
+        exampleAttributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes : [],
+        attributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes.length : (updatedDict.attributes || 0),
+        vendorCodes: updatedDict.vendorCodes || 0,
       } : d));
       toast({ title: "Success", description: `Dictionary "${updatedDict.name}" status updated.` });
     } catch (error) {
       console.error("Error toggling dictionary status:", error);
       toast({ title: "Update Failed", description: (error as Error).message, variant: "destructive" });
-      setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict));
+      setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict)); // Revert on error
     } finally {
       setIsSaving(false);
     }
@@ -257,7 +266,7 @@ export default function DictionariesPage() {
   const handleViewDictionary = (dictionary: Dictionary) => {
     setSelectedDictionaryForView(dictionary);
     const attributesArray = Array.isArray(dictionary.exampleAttributes) ? dictionary.exampleAttributes : [];
-    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray)));
+    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); // Deep copy
   };
 
   const handleViewAttributeDetail = (attribute: Attribute) => {
@@ -308,19 +317,21 @@ export default function DictionariesPage() {
       const response = await fetch(`/api/dictionaries/${selectedDictionaryForView.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }),
+        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), // Send as array
       });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || errorData.message || 'Failed to save example attributes');
       }
       const updatedDictionary: Dictionary = await response.json();
+      // Update the main dictionaries list
       setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? {
         ...updatedDictionary,
-        attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0,
-        vendorCodes: d.vendorCodes || 0, 
-        exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : []
+        exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : [],
+        attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : (updatedDictionary.attributes || 0),
+        vendorCodes: updatedDictionary.vendorCodes || 0,
       } : d));
+      // Update the selected dictionary for view
       setSelectedDictionaryForView(prev => prev ? {
         ...prev,
         exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : [],
@@ -344,7 +355,16 @@ export default function DictionariesPage() {
   };
 
   const isAllSelected = dictionaries.length > 0 && selectedDictionaryIds.length === dictionaries.length;
-  const isSomeSelected = selectedDictionaryIds.length > 0 && selectedDictionaryIds.length < dictionaries.length;
+  const isSomeSelectedAndNotAll = selectedDictionaryIds.length > 0 && !isAllSelected;
+
+  let headerCheckboxCheckedState: boolean | 'indeterminate';
+  if (isAllSelected) {
+    headerCheckboxCheckedState = true;
+  } else if (isSomeSelectedAndNotAll) {
+    headerCheckboxCheckedState = 'indeterminate';
+  } else {
+    headerCheckboxCheckedState = false;
+  }
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -353,6 +373,7 @@ export default function DictionariesPage() {
       setSelectedDictionaryIds([]);
     }
   };
+
 
   const handleSelectRow = (id: string, checked: boolean) => {
     if (checked) {
@@ -517,8 +538,8 @@ export default function DictionariesPage() {
                 <DialogHeader>
                   <DialogTitle>Import New Dictionary</DialogTitle>
                   <DialogDescription>
-                    Manually enter details, paste content, or upload file(s).
-                    Uploading multiple files attempts to parse each; individual file import is recommended for large/complex files.
+                    Manually enter details, paste content, or upload file(s). 
+                    AI Parsing works best on self-contained files. Uploading multiple files attempts to parse each.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid grid-cols-3 gap-2 my-4">
@@ -582,12 +603,13 @@ export default function DictionariesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[50px] px-4">
-                  <Checkbox
-                    checked={isAllSelected}
-                    onCheckedChange={(checkedState) => handleSelectAll(checkedState as boolean)}
+                   <Checkbox
+                    checked={headerCheckboxCheckedState}
+                    onCheckedChange={(newIsChecked) => {
+                        handleSelectAll(newIsChecked as boolean);
+                    }}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
-                    indeterminate={isSomeSelected ? true : undefined}
                   />
                 </TableHead>
                 <TableHead>Name</TableHead>
