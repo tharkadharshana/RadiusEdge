@@ -1,13 +1,2 @@
-
-"use client";
-
-import React from "react"; // Explicitly import React for clarity
-
-export default function ImportPage() {
-  return (
-    <div>
-      <h1>Packet Importer - Minimal Test</h1>
-      <p>If you see this, the basic file parsing is working.</p>
-    </div>
-  );
-}
+// This file is intentionally left blank and can be deleted.
+// The Packet Importer feature has been removed.
