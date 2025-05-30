@@ -103,7 +103,7 @@ const initialScenarios: Scenario[] = [
   {
     id: 'scn1',
     name: '3GPP Full Auth Flow',
-    description: 'Simulates a complete 3GPP authentication and accounting cycle.',
+    description: 'A complete 3GPP authentication and accounting cycle.',
     variables: [{id: 'var1', name: 'imsi', type: 'random_string', value: '3134600000000[0-9]{3}'}],
     steps: [
       { id: 's1', type: 'radius', name: 'Send Access-Request', details: { packet_id: '3gpp_auth_req', expectedAttributes: [{id: 'exp1_1', name: 'Framed-IP-Address', value: '192.168.1.100'}], timeout: 3000, retries: 2 } },
@@ -437,12 +437,10 @@ export default function ScenariosPage() {
         const text = e.target?.result as string;
         const importedData = JSON.parse(text);
 
-        // Basic validation
         if (typeof importedData.name !== 'string' || !Array.isArray(importedData.steps)) {
           throw new Error("Invalid scenario file format. Missing 'name' or 'steps'.");
         }
         
-        // Prepare for editing (ensure all necessary fields exist, assign new IDs if needed, etc.)
         const scenarioToEdit: Scenario = {
           id: `imported-${Date.now()}`, 
           name: importedData.name || "Imported Scenario",
@@ -484,7 +482,7 @@ export default function ScenariosPage() {
     <div className="space-y-8">
       <PageHeader
         title="Scenario Builder"
-        description="Design complex RADIUS test scenarios. Conditional logic is visual only. API calls are simulated. Step reordering (drag & drop) is not yet implemented."
+        description="Design complex RADIUS test scenarios. Conditional logic is visual only. API calls are for external system interaction. Step reordering (drag & drop) is not yet implemented."
         actions={
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept=".json" />
@@ -574,68 +572,69 @@ export default function ScenariosPage() {
         </CardContent>
       </Card>
 
-      {/* Scenario Editor Dialog */}
       <Dialog open={!!editingScenario} onOpenChange={(isOpen) => !isOpen && handleEditScenario(null)}>
         <DialogContent className="max-w-4xl h-[85vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' || editingScenario?.id.startsWith('imported-') ? 'Create/Edit Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-              Define scenario properties, variables, and steps. Conditional logic is visual only. API calls are simulated. Step reordering (drag & drop) is not yet implemented.
+             Define scenario properties, variables, and steps. Conditional logic is visual only. API calls are for external system interaction. Step reordering (drag & drop) is not yet implemented.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden min-h-0">
               {/* Left Panel: Scenario Details & Variables */}
-              <ScrollArea className="md:col-span-1 h-full border rounded-md p-4 bg-muted/20 min-h-0"> 
-                <div className="space-y-4">
-                  <Card>
-                    <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
-                    <CardContent className="space-y-3">
-                      <div>
-                        <Label htmlFor="scenario-name">Scenario Name</Label>
-                        <Input id="scenario-name" value={editingScenario.name} onChange={(e) => setEditingScenario({ ...editingScenario, name: e.target.value })} />
-                      </div>
-                      <div>
-                        <Label htmlFor="scenario-description">Description</Label>
-                        <Textarea id="scenario-description" value={editingScenario.description} onChange={(e) => setEditingScenario({ ...editingScenario, description: e.target.value })} />
-                      </div>
-                      <div>
-                        <Label htmlFor="scenario-tags">Tags (comma-separated)</Label>
-                        <Input id="scenario-tags" value={editingScenario.tags.join(', ')} onChange={(e) => setEditingScenario({ ...editingScenario, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })} placeholder="e.g., Auth, 3GPP" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Variable className="h-5 w-5 text-primary"/>Variables</CardTitle></CardHeader>
-                    <CardContent className="space-y-3">
-                      {editingScenario.variables.map((variable, index) => (
-                        <Card key={variable.id} className="p-3 bg-card">
-                          <div className="flex justify-between items-center mb-1">
-                            <Label htmlFor={`var-name-${index}`} className="text-xs font-semibold">Variable {index + 1}</Label>
-                            <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive">
-                                <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input placeholder="Name" value={variable.name} onChange={(e) => handleVariableChange(index, 'name', e.target.value)} />
-                            <Select value={variable.type} onValueChange={(val) => handleVariableChange(index, 'type', val)}>
-                              <SelectTrigger><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="static">Static</SelectItem>
-                                <SelectItem value="random_string">Random String</SelectItem>
-                                <SelectItem value="random_number">Random Number</SelectItem>
-                                <SelectItem value="list">List</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <Input className="mt-1" placeholder="Value / Pattern / List (CSV)" value={variable.value} onChange={(e) => handleVariableChange(index, 'value', e.target.value)} />
-                        </Card>
-                      ))}
-                      <Button variant="outline" size="sm" onClick={addVariable} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Variable</Button>
-                    </CardContent>
-                  </Card>
-                </div>
-              </ScrollArea>
+              <div className="md:col-span-1 border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden">
+                <ScrollArea className="h-full">
+                  <div className="space-y-4 pr-2">
+                    <Card>
+                      <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
+                      <CardContent className="space-y-3">
+                        <div>
+                          <Label htmlFor="scenario-name">Scenario Name</Label>
+                          <Input id="scenario-name" value={editingScenario.name} onChange={(e) => setEditingScenario({ ...editingScenario, name: e.target.value })} />
+                        </div>
+                        <div>
+                          <Label htmlFor="scenario-description">Description</Label>
+                          <Textarea id="scenario-description" value={editingScenario.description} onChange={(e) => setEditingScenario({ ...editingScenario, description: e.target.value })} />
+                        </div>
+                        <div>
+                          <Label htmlFor="scenario-tags">Tags (comma-separated)</Label>
+                          <Input id="scenario-tags" value={editingScenario.tags.join(', ')} onChange={(e) => setEditingScenario({ ...editingScenario, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })} placeholder="e.g., Auth, 3GPP" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Variable className="h-5 w-5 text-primary"/>Variables</CardTitle></CardHeader>
+                      <CardContent className="space-y-3">
+                        {editingScenario.variables.map((variable, index) => (
+                          <Card key={variable.id} className="p-3 bg-card">
+                            <div className="flex justify-between items-center mb-1">
+                              <Label htmlFor={`var-name-${index}`} className="text-xs font-semibold">Variable {index + 1}</Label>
+                              <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive">
+                                  <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <Input placeholder="Name" value={variable.name} onChange={(e) => handleVariableChange(index, 'name', e.target.value)} />
+                              <Select value={variable.type} onValueChange={(val) => handleVariableChange(index, 'type', val)}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="static">Static</SelectItem>
+                                  <SelectItem value="random_string">Random String</SelectItem>
+                                  <SelectItem value="random_number">Random Number</SelectItem>
+                                  <SelectItem value="list">List</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Input className="mt-1" placeholder="Value / Pattern / List (CSV)" value={variable.value} onChange={(e) => handleVariableChange(index, 'value', e.target.value)} />
+                          </Card>
+                        ))}
+                        <Button variant="outline" size="sm" onClick={addVariable} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Variable</Button>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </ScrollArea>
+              </div>
 
               {/* Right Panel: Scenario Steps */}
               <div className="md:col-span-2 flex flex-col h-full border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden"> 
@@ -649,7 +648,7 @@ export default function ScenariosPage() {
                         <DropdownMenuItem onClick={() => addStep('radius')}><FileText className="mr-2 h-4 w-4" /> RADIUS Packet</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('sql')}><Database className="mr-2 h-4 w-4" /> SQL Validation</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('delay')}><Clock className="mr-2 h-4 w-4" /> Delay</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => addStep('api_call')}><Webhook className="mr-2 h-4 w-4" /> API Call (Simulated)</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => addStep('api_call')}><Webhook className="mr-2 h-4 w-4" /> API Call</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('log_message')}><MessageSquareText className="mr-2 h-4 w-4" /> Log Message</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => addStep('loop_start')}><Repeat className="mr-2 h-4 w-4" /> Loop Start</DropdownMenuItem>
@@ -665,7 +664,7 @@ export default function ScenariosPage() {
                       const StepIcon = stepIcons[step.type];
                       return (
                         <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
-                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented)">
+                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented - visual cue only)">
                             <GripVertical className="h-4 w-4" />
                           </Button>
                           <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100">
@@ -676,7 +675,6 @@ export default function ScenariosPage() {
                             <Input value={step.name} onChange={(e) => handleStepChange(index, 'name', e.target.value)} className="text-md font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto" />
                           </div>
 
-                          {/* RADIUS Step Details */}
                           {step.type === 'radius' && (
                             <div className="space-y-3 pl-7 text-sm">
                               <div>
@@ -686,7 +684,6 @@ export default function ScenariosPage() {
                                   <SelectContent>
                                     <SelectItem value="pkt1">3GPP Access-Request</SelectItem>
                                     <SelectItem value="pkt2">Cisco VoIP Acc Start</SelectItem>
-                                    {/* TODO: Populate from actual packet library */}
                                   </SelectContent>
                                 </Select>
                               </div>
@@ -748,7 +745,6 @@ export default function ScenariosPage() {
                             </div>
                           )}
 
-                          {/* SQL Step Details */}
                           {step.type === 'sql' && (
                             <div className="space-y-2 pl-7 text-sm">
                               <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} />
@@ -765,14 +761,13 @@ export default function ScenariosPage() {
                             <div className="space-y-2 pl-7 text-sm">
                               {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} /></div>}
                               <Label>Condition:</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
-                              {step.type === 'conditional_start' && <p className="text-xs text-muted-foreground">Note: Conditional execution is visual only in this prototype.</p>}
+                              {step.type === 'conditional_start' && <p className="text-xs text-muted-foreground">Note: Conditional execution is visual only.</p>}
                             </div>
                           )}
                           {(step.type === 'loop_end' || step.type === 'conditional_end') && (
                             <p className="pl-7 text-sm text-muted-foreground">Marks the end of the block.</p>
                           )}
                           
-                          {/* API Call Step Details */}
                           {step.type === 'api_call' && (
                             <div className="space-y-3 pl-7 text-sm">
                               <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })}/></div>
@@ -806,12 +801,11 @@ export default function ScenariosPage() {
                               {step.details.method === 'POST' && (
                                 <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={step.details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3}/></div>
                               )}
-                              <div><Label>Mock Response Body (JSON for simulation):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3}/></div>
-                              <p className="text-xs text-muted-foreground">Note: API calls are simulated. No actual HTTP request will be made.</p>
+                              <div><Label>Mock Response Body (JSON for execution):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3}/></div>
+                              <p className="text-xs text-muted-foreground">Note: API calls are for interaction with external systems.</p>
                             </div>
                           )}
 
-                          {/* Log Message Step Details */}
                           {step.type === 'log_message' && (
                             <div className="space-y-2 pl-7 text-sm">
                                 <Label>Message to Log:</Label>
@@ -840,4 +834,3 @@ export default function ScenariosPage() {
     </div>
   );
 }
-

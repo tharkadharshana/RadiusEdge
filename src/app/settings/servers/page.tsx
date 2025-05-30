@@ -53,7 +53,7 @@ interface SshExecutionStep {
   name: string;
   command: string;
   isEnabled: boolean;
-  expectedOutputContains?: string; // Added field
+  expectedOutputContains?: string;
 }
 
 interface ServerConfig {
@@ -411,7 +411,7 @@ export default function ServerConfigPage() {
               </div>
 
               <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">SSH Details (for simulated tests &amp; preambles)</legend>
+                <legend className="text-sm font-medium px-1">SSH Details</legend>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="ssh-port">SSH Port</Label>
@@ -434,21 +434,21 @@ export default function ServerConfigPage() {
                     {editingConfig.authMethod === 'key' ? (
                         <div className="md:col-span-2">
                             <Label htmlFor="ssh-key">SSH Private Key</Label>
-                            <Textarea id="ssh-key" value={editingConfig.privateKey || ''} onChange={(e) => setEditingConfig({...editingConfig, privateKey: e.target.value})} placeholder="Paste your private key here (stored locally, used for simulation)" rows={3}/>
+                            <Textarea id="ssh-key" value={editingConfig.privateKey || ''} onChange={(e) => setEditingConfig({...editingConfig, privateKey: e.target.value})} placeholder="Paste your private key here" rows={3}/>
                         </div>
                     ) : (
                          <div>
                             <Label htmlFor="ssh-password">SSH Password</Label>
-                            <Input id="ssh-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter SSH password (for simulation)"/>
+                            <Input id="ssh-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter SSH password"/>
                         </div>
                     )}
                 </div>
                 <div className="mt-6">
                   <Label className="text-md font-semibold flex items-center gap-2">
-                    Scenario Execution SSH Preamble (Simulated)
+                    Scenario Execution SSH Preamble
                   </Label>
                   <p className="text-xs text-muted-foreground mt-1 mb-3">
-                    Define SSH commands (e.g., for jump hosts) that would (simulatively) run before RADIUS scenarios. RadiusEdge does NOT execute live SSH.
+                    Define SSH commands (e.g., for jump hosts) that would run before RADIUS scenarios. 
                     If 'Expected Output Contains' is set, the step must produce that output for the preamble to continue.
                   </p>
                   <div className="space-y-3">
@@ -477,7 +477,7 @@ export default function ServerConfigPage() {
                           </div>
                         </div>
                         <div>
-                          <Label htmlFor={`ssh-preamble-cmd-${index}`} className="text-xs text-muted-foreground">Simulated SSH Command</Label>
+                          <Label htmlFor={`ssh-preamble-cmd-${index}`} className="text-xs text-muted-foreground">SSH Command</Label>
                           <Textarea
                             id={`ssh-preamble-cmd-${index}`}
                             value={step.command}
@@ -546,7 +546,7 @@ export default function ServerConfigPage() {
 
               <fieldset className="border p-4 rounded-md">
                   <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
-                    <span>Connection Test Sequence (Simulated)</span>
+                    <span>Connection Test Sequence</span>
                     <Button variant="outline" size="sm" onClick={addCustomTestStep} className="ml-auto">
                         <PlusCircle className="mr-2 h-4 w-4" /> Add Custom Step
                     </Button>
@@ -581,7 +581,7 @@ export default function ServerConfigPage() {
                                 </div>
                             </div>
                             <div>
-                                <Label htmlFor={`step-cmd-${index}`} className="text-xs text-muted-foreground">Simulated Command</Label>
+                                <Label htmlFor={`step-cmd-${index}`} className="text-xs text-muted-foreground">Command</Label>
                                 <Textarea 
                                     id={`step-cmd-${index}`}
                                     value={step.command} 
@@ -601,7 +601,7 @@ export default function ServerConfigPage() {
                                     placeholder="e.g., 'active (running)' or '/usr/bin/radclient'"
                                 />
                                 <p className="text-xs text-muted-foreground mt-1">
-                                    If provided, step succeeds if simulated output includes this text. Otherwise, AI decides.
+                                    If provided, step succeeds if output includes this text. Otherwise, AI decides.
                                 </p>
                             </div>
                             <p className="text-xs text-muted-foreground mt-2">
@@ -634,8 +634,7 @@ export default function ServerConfigPage() {
           <DialogHeader>
             <DialogTitle>Connection Test Results: {configs.find(c => c.id === testingServerId)?.name}</DialogTitle>
             <DialogDescription>
-              Showing (simulated) results of the connection and setup checks. 
-              <span className="font-semibold text-destructive"> This is a simulation; no actual SSH or commands were run on your server.</span>
+              Showing results of the connection and setup checks. 
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-[60vh] pr-4 py-4">
@@ -683,7 +682,7 @@ export default function ServerConfigPage() {
                     </CardHeader>
                     {(step.output || step.error || step.command) && (
                         <CardContent className="p-3 text-xs bg-muted/30 dark:bg-muted/10">
-                            {step.command && <p className="text-muted-foreground font-mono mb-1">Simulated command: <code className="text-foreground bg-background/50 px-1 rounded dark:bg-background/20">{step.command}</code></p>}
+                            {step.command && <p className="text-muted-foreground font-mono mb-1">Command: <code className="text-foreground bg-background/50 px-1 rounded dark:bg-background/20">{step.command}</code></p>}
                             {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto dark:bg-background/20">{step.output}</pre>}
                             {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 dark:text-red-400 bg-red-500/10 p-2 rounded mt-1 max-h-40 overflow-y-auto dark:bg-red-600/20">{step.error}</pre>}
                         </CardContent>

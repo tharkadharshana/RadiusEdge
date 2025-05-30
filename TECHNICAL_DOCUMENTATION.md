@@ -3,7 +3,7 @@
 
 ## 1. Introduction
 
-RadiusEdge is a web-based platform designed for advanced RADIUS (Remote Authentication Dial-In User Service) testing and simulation. It aims to provide network engineers, QA teams, and developers with a comprehensive suite of tools to design, execute (currently simulated), and analyze RADIUS test scenarios. This document provides a technical overview of the RadiusEdge application, its architecture, technology stack, and key components.
+RadiusEdge is a web-based platform designed for advanced RADIUS (Remote Authentication Dial-In User Service) testing and scenario management. It aims to provide network engineers, QA teams, and developers with a comprehensive suite of tools to design, execute, and analyze RADIUS test scenarios. This document provides a technical overview of the RadiusEdge application, its architecture, technology stack, and key components.
 
 ## 2. Technology Stack
 
@@ -73,7 +73,7 @@ radius-edge/
 ### 4.1. Layout (`src/app/layout.tsx`, `src/components/layout/`)
 - **`RootLayout (layout.tsx)`:** Sets up the HTML structure, includes global CSS, `ThemeProvider`, `SidebarProvider`, and `Toaster`.
 - **`AppSidebar (app-sidebar.tsx)`:** Provides main navigation. Uses ShadCN's `Sidebar` component. Dynamically highlights active links based on the current pathname.
-- **`AppHeader (app-header.tsx)`:** Contains the sidebar trigger, server status badge (mocked), notifications button (conceptual), and theme toggle.
+- **`AppHeader (app-header.tsx)`:** Contains the sidebar trigger, server status badge, notifications button (conceptual), and theme toggle.
 - **`ThemeProvider (theme-provider.tsx)`:** Uses `next-themes` to manage light/dark mode.
 - **`Logo (logo.tsx)`:** SVG logo component.
 - **`ServerStatusBadge (server-status-badge.tsx)`:** Displays a mock server connection status.
@@ -151,13 +151,13 @@ radius-edge/
     - Dialog to view details of a specific attribute (mocked).
 
 ### 4.7. Execution Console (`src/app/execute/page.tsx`)
-- **Functionality:** (Simulated) View real-time logs of test scenario executions.
+- **Functionality:** View real-time logs of test scenario executions.
 - **UI:**
     - "Start a Test Scenario" buttons (mock triggers).
     - Main card displays live output.
     - Controls for (conceptual) Abort, Save PCAP, Export Logs.
     - Log entries are color-coded by level (INFO, ERROR, SENT, RECV, SSH_CMD, SSH_OUT, SSH_FAIL).
-    - Displays (simulated) SSH preamble steps from server configuration before (simulated) RADIUS packet logs.
+    - Displays SSH preamble steps from server configuration before RADIUS packet logs.
 - **Simulation Logic:**
     - `useEffect` hook simulates log generation when `isRunning` is true.
     - Fetches mock server configurations (defined in-file) to simulate SSH preambles.
@@ -192,13 +192,13 @@ radius-edge/
         - Basic server details (name, type, host).
         - SSH Details: port, user, auth method (key/password with inputs for key/password), and **Scenario Execution SSH Preamble** (list of configurable SSH steps for use during scenario execution, with `expectedOutputContains`).
         - RADIUS Ports & Secrets: Auth/Acct ports, default secret, NAS-specific secrets.
-        - **Connection Test Sequence (Simulated):** List of customizable test steps (name, command, enabled, mandatory, type, `expectedOutputContains`).
+        - **Connection Test Sequence:** List of customizable test steps (name, command, enabled, mandatory, type, `expectedOutputContains`).
     - "Test Connection" button triggers AI flow.
-    - Dialog to display (simulated) step-by-step test results.
+    - Dialog to display step-by-step test results.
 - **Backend Interaction:** Calls `testServerConnection` flow.
 
 #### 4.9.2. Database Validation Setup (`src/app/settings/database/page.tsx`)
-- **Functionality:** Configure database connections for (simulated) validation of test results.
+- **Functionality:** Configure database connections for validation of test results.
 - **Data Structures:**
     - `DbConnectionConfig`: `id`, `name`, `type` ('mysql', 'postgresql', etc.), `host`, `port`, `username`, `password`, `databaseName`, `status`, `sshPreambleSteps` (for scenarios), `validationSteps`.
     - `DbSshPreambleStepConfig`: `id`, `name`, `command`, `isEnabled`, `expectedOutputContains`.
@@ -208,10 +208,10 @@ radius-edge/
     - "Add DB Connection" button.
     - **DB Config Editor Dialog:**
         - Basic connection details.
-        - **Scenario SSH Preamble (Simulated - for scenarios using this DB):** List of configurable SSH steps.
-        - **Validation Sequence (Simulated - for 'Test Connection & Validation'):** List of SQL or SSH steps for direct DB testing.
+        - **Scenario SSH Preamble (for scenarios using this DB):** List of configurable SSH steps.
+        - **Validation Sequence (for 'Test Connection & Validation'):** List of SQL or SSH steps for direct DB testing.
     - "Test Connection & Validation" button triggers AI flow.
-    - Dialog to display (simulated) step-by-step test results (preamble steps are NOT part of this specific test, only DB connection and validation sequence).
+    - Dialog to display step-by-step test results.
 - **Backend Interaction:** Calls `testDbValidation` flow.
 
 #### 4.9.3. User Management (`src/app/settings/users/page.tsx`)
@@ -228,7 +228,7 @@ radius-edge/
 All AI flows are defined in `.ts` files within this directory and are marked with `'use server';`. They generally follow a pattern:
 1.  Define input and output Zod schemas.
 2.  Export TypeScript types inferred from these schemas.
-3.  Define an `ai.definePrompt(...)` with input/output schemas and a Handlebars template for the prompt.
+3.  Define an `ai.definePrompt(...)` with input/output schemas and a Handlebars template for the prompt, or implement custom logic.
 4.  Define an `ai.defineFlow(...)` that takes the input schema, calls the prompt (or other logic), and returns data matching the output schema.
 5.  Export an `async` wrapper function that calls the flow. This wrapper is what client components import and use.
 
@@ -245,11 +245,11 @@ All AI flows are defined in `.ts` files within this directory and are marked wit
     - Output: `parsedAttributes` (array of `{name, value}`).
     - Purpose: Parses a block of text representing RADIUS attributes into a structured list.
 - **`test-db-validation-flow.ts`:**
-    - Input: DB connection details, validation steps (SQL/SSH). (Does NOT include SSH preamble for its direct test).
+    - Input: DB connection details, validation steps (SQL/SSH).
     - Output: Overall status, DB connection status, results of validation steps.
     - Purpose: Simulates testing a DB connection and a sequence of validation steps (SQL queries or SSH commands on the DB host).
 - **`test-server-connection-flow.ts`:**
-    - Input: Server details, sequence of test steps (commands with `expectedOutputContains`).
+    * Input: Server details, sequence of test steps (commands with `expectedOutputContains`).
     * Output: Overall status, results for each test step.
     * Purpose: Simulates testing a RADIUS server connection and setup based on a customizable sequence of steps. Halts on first critical failure.
 
@@ -274,19 +274,16 @@ All AI flows are defined in `.ts` files within this directory and are marked wit
 - **Start Production:** `npm run start`
 - **Linting/Typechecking:** `npm run lint`, `npm run typecheck`
 
-## 9. Important Considerations & Limitations (Current Prototype)
-- **No Persistent Storage:** All data (scenarios, packets, server configs, results) is currently stored in React component state and will be lost on page refresh or application restart. A database backend (e.g., Firestore, PostgreSQL) would be needed for persistence.
-- **Simulated Execution:**
-    - RADIUS packet sending and receiving are simulated. No actual network traffic is generated.
-    - SSH commands (for server tests, DB validation, or scenario preambles) are simulated by AI flows or mock logic. RadiusEdge does **not** perform live SSH.
-    - SQL queries are simulated. No actual database connections are made or queries run against live databases by the prototype.
+## 9. Important Considerations
+- **No Persistent Storage (Current Prototype):** All data (scenarios, packets, server configs, results) is currently stored in React component state and will be lost on page refresh or application restart. A database backend (e.g., SQLite, Firestore, PostgreSQL) would be needed for persistence.
+- **AI Flows for Simulation (Current Prototype):** Many backend interactions (SSH, RADIUS packet exchange, SQL queries) are currently simulated by AI flows for prototyping purposes. For a production system, these would be replaced with actual backend implementations.
 - **No User Authentication/Authorization:** The application is currently open. A production system would require user accounts, roles, and permissions.
-- **Conceptual Features:** Some UI elements (e.g., "Save PCAP", "Notifications", some import/export buttons) are placeholders for future functionality.
+- **Conceptual Features:** Some UI elements (e.g., "Save PCAP", "Notifications", some import/export buttons) are placeholders for functionality that would exist in a complete application.
 - **Error Handling:** Basic error handling with toasts is present, but comprehensive error management for all edge cases would need further development.
 
-## 10. Future Enhancements
+## 10. Future Enhancements (Conceptual)
 - Implement a real backend service for:
-    - Persistent storage of all user data.
+    - Persistent storage of all user data (e.g., using SQLite or another database).
     - Secure execution of live SSH commands and `radclient`/`radtest`.
     - Actual RADIUS packet sending/receiving.
     - Live database interactions.

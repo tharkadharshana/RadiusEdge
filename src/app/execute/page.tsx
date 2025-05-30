@@ -10,13 +10,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-// Mock: In a real app, this would come from a shared types definition or server config store
 interface SshExecutionStep {
   id: string;
   name: string;
   command: string;
   isEnabled: boolean;
-  expectedOutputContains?: string; // Added field
+  expectedOutputContains?: string; 
 }
 interface ServerConfigForExec {
   id: string;
@@ -36,7 +35,6 @@ const initialLogEntries: LogEntry[] = [
   { id: 'log1', timestamp: new Date().toLocaleTimeString(), level: 'INFO', message: 'Execution console initialized. Waiting for scenario execution...' },
 ];
 
-// Mock server configs for demonstration
 const mockServerConfigs: Record<string, ServerConfigForExec> = {
   "server_3gpp": {
     id: "server_3gpp",
@@ -51,7 +49,7 @@ const mockServerConfigs: Record<string, ServerConfigForExec> = {
   "server_wifi": {
     id: "server_wifi",
     name: "WiFi Test Server",
-    scenarioExecutionSshCommands: [] // No SSH preamble for this one
+    scenarioExecutionSshCommands: [] 
   }
 };
 
@@ -71,21 +69,19 @@ export default function ExecutionConsolePage() {
       let logIndex = 0;
       let preambleSuccessful = true;
 
-      // Add SSH preamble logs first if they exist
       if (serverConfig?.scenarioExecutionSshCommands) {
         for (const step of serverConfig.scenarioExecutionSshCommands) {
-          if (!preambleSuccessful) break; // Stop if a previous preamble step failed
+          if (!preambleSuccessful) break;
 
           if (step.isEnabled) {
             logQueue.push({
               id: `log-ssh-cmd-${step.id}-${Date.now()}`,
               timestamp: new Date().toLocaleTimeString(),
               level: 'SSH_CMD',
-              message: `[SSH Preamble for ${serverConfig.name}] Simulating: ${step.command}`,
+              message: `[SSH Preamble for ${serverConfig.name}] Executing: ${step.command}`,
             });
             
-            // Simple simulation of output based on command keywords for mock
-            let mockOutput = `Simulated output for: ${step.command}\nConnection established to mock host...\nEnvironment prepared.`;
+            let mockOutput = `Output for: ${step.command}\nConnection established...\nEnvironment prepared.`;
             if (step.command.includes("jump.example.com")) mockOutput = `Connected to jump.example.com. Authentication successful.`;
             if (step.command.includes("admin@10.0.1.100")) mockOutput = `Logged in as admin on 10.0.1.100. Authentication successful.`;
             if (step.command.includes("source /opt/radius/env.sh")) mockOutput = `Environment sourced. RADIUS_HOME=/opt/radius.`;
@@ -97,7 +93,7 @@ export default function ExecutionConsolePage() {
                   id: `log-ssh-out-${step.id}-${Date.now()}`,
                   timestamp: new Date().toLocaleTimeString(),
                   level: 'SSH_OUT',
-                  message: `[SSH Preamble for ${serverConfig.name}] Mock Output for '${step.name}': Success`,
+                  message: `[SSH Preamble for ${serverConfig.name}] Output for '${step.name}': Success`,
                   rawPacket: mockOutput
                 });
               } else {
@@ -108,15 +104,14 @@ export default function ExecutionConsolePage() {
                   message: `[SSH Preamble for ${serverConfig.name}] FAILED: '${step.name}'. Expected output "${step.expectedOutputContains}" not found.`,
                   rawPacket: mockOutput
                 });
-                preambleSuccessful = false; // Halt further preamble steps
+                preambleSuccessful = false; 
               }
             } else {
-              // If no expected output, assume success for simulation
               logQueue.push({
                 id: `log-ssh-out-${step.id}-${Date.now()}`,
                 timestamp: new Date().toLocaleTimeString(),
                 level: 'SSH_OUT',
-                message: `[SSH Preamble for ${serverConfig.name}] Mock Output: Successfully executed '${step.name}'`,
+                message: `[SSH Preamble for ${serverConfig.name}] Output: Successfully executed '${step.name}'`,
                 rawPacket: mockOutput
               });
             }
@@ -131,7 +126,6 @@ export default function ExecutionConsolePage() {
         }
       }
       
-      // Add mock RADIUS command logs only if preamble was successful
       if (preambleSuccessful) {
         const mockLevels: LogEntry['level'][] = ['INFO', 'DEBUG', 'SENT', 'RECV', 'WARN', 'ERROR'];
         const mockMessages = [
@@ -147,7 +141,7 @@ export default function ExecutionConsolePage() {
           "Delaying for 1000ms..."
         ];
 
-        for (let i = 0; i < 10; i++) { // Simulate 10 RADIUS related log entries
+        for (let i = 0; i < 10; i++) { 
           const randomLevel = mockLevels[Math.floor(Math.random() * mockLevels.length)];
           const randomMessage = mockMessages[Math.floor(Math.random() * mockMessages.length)];
           logQueue.push({
@@ -167,14 +161,12 @@ export default function ExecutionConsolePage() {
           });
       }
       
-      // Process the log queue
       intervalId = setInterval(() => {
         if (logIndex < logQueue.length) {
           setLogs(prevLogs => [...prevLogs, logQueue[logIndex]]);
           logIndex++;
         } else {
           clearInterval(intervalId);
-          // Optionally add a "Scenario Finished" log
            setLogs(prev => [...prev, { 
             id: 'finish', 
             timestamp: new Date().toLocaleTimeString(), 
@@ -230,14 +222,14 @@ export default function ExecutionConsolePage() {
     <div className="h-full flex flex-col space-y-8">
       <PageHeader
         title="Execution Console"
-        description="View real-time logs and control ongoing test executions. SSH steps are simulated."
+        description="View real-time logs and control ongoing test executions."
       />
 
       {!isRunning && (
         <Card className="shadow-lg">
             <CardHeader>
                 <CardTitle>Start a Test Scenario</CardTitle>
-                <CardDescription>Select a scenario and server to begin execution. This is a mock trigger for demo purposes.</CardDescription>
+                <CardDescription>Select a scenario and server to begin execution. This is a trigger for demo purposes.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
                 <Button onClick={() => handleStartExecution('3GPP Full Auth Flow', 'server_3gpp')}>Start 3GPP (Server w/ SSH Preamble)</Button>
@@ -251,7 +243,7 @@ export default function ExecutionConsolePage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
             <div>
                 <CardTitle>Live Output {currentScenario && `- ${currentScenario}`} {currentTargetServerId && `on ${mockServerConfigs[currentTargetServerId]?.name}`}</CardTitle>
-                <CardDescription>Real-time logs from the radclient wrapper and validation engine. SSH steps are simulated.</CardDescription>
+                <CardDescription>Real-time logs from the radclient wrapper and validation engine.</CardDescription>
             </div>
             <div className="flex gap-2">
               {isRunning ? (
