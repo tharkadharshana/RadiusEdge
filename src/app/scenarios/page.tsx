@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X, Wand2, Loader2, Webhook, MessageSquareText } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X, Wand2, Loader2, Webhook, MessageSquareText, Upload, Download } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -155,6 +155,7 @@ export default function ScenariosPage() {
   const [pastedAttributesText, setPastedAttributesText] = useState('');
   const [isParsingAttributes, setIsParsingAttributes] = useState(false);
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const templateId = searchParams.get('template');
@@ -183,12 +184,13 @@ export default function ScenariosPage() {
     if (editingScenario) {
       const now = new Date().toISOString().split('T')[0];
       const scenarioToSave = { ...editingScenario, lastModified: now };
-      if (editingScenario.id === 'new') {
+      if (editingScenario.id === 'new' || editingScenario.id.startsWith('imported-')) {
         setScenarios(prev => [...prev, { ...scenarioToSave, id: `scn${Date.now()}` }]);
       } else {
         setScenarios(prev => prev.map(s => s.id === editingScenario.id ? scenarioToSave : s));
       }
       handleEditScenario(null);
+      toast({ title: "Scenario Saved", description: `Scenario "${scenarioToSave.name}" has been saved.` });
     }
   };
 
@@ -370,7 +372,6 @@ export default function ScenariosPage() {
     }
   };
 
-
   const handleParsePastedAttributes = async (stepIndex: number) => {
     if (!editingScenario || !pastedAttributesText.trim()) {
       toast({ title: "Nothing to parse", description: "Please paste attribute data into the text area.", variant: "destructive" });
@@ -403,16 +404,98 @@ export default function ScenariosPage() {
     }
   };
 
+  const handleExportScenario = () => {
+    if (!editingScenario) {
+      toast({ title: "No Scenario to Export", description: "Please open a scenario to export.", variant: "destructive" });
+      return;
+    }
+    const scenarioJson = JSON.stringify(editingScenario, null, 2);
+    const blob = new Blob([scenarioJson], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeName = editingScenario.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    a.download = `radiusedge_scenario_${safeName || 'untitled'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: "Scenario Exported", description: `Scenario "${editingScenario.name}" has been prepared for download.` });
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const importedData = JSON.parse(text);
+
+        // Basic validation
+        if (typeof importedData.name !== 'string' || !Array.isArray(importedData.steps)) {
+          throw new Error("Invalid scenario file format. Missing 'name' or 'steps'.");
+        }
+        
+        // Prepare for editing (ensure all necessary fields exist, assign new IDs if needed, etc.)
+        const scenarioToEdit: Scenario = {
+          id: `imported-${Date.now()}`, // Mark as imported, will get new ID on save
+          name: importedData.name || "Imported Scenario",
+          description: importedData.description || "",
+          variables: Array.isArray(importedData.variables) ? importedData.variables.map((v: any) => ({
+            id: v.id || `var${Date.now()}${Math.random()}`, ...v
+          })) : [],
+          steps: Array.isArray(importedData.steps) ? importedData.steps.map((s: any) => ({
+            id: s.id || `step${Date.now()}${Math.random()}`, ...s,
+            details: s.details || {},
+            expectedAttributes: Array.isArray(s.details?.expectedAttributes) ? s.details.expectedAttributes.map((ea: any) => ({
+              id: ea.id || `exp_attr_${Date.now()}${Math.random()}`, ...ea
+            })) : [],
+            headers: Array.isArray(s.details?.headers) ? s.details.headers.map((h: any) => ({
+              id: h.id || `header_${Date.now()}${Math.random()}`, ...h
+            })) : [],
+          })) : [],
+          lastModified: new Date().toISOString().split('T')[0],
+          tags: Array.isArray(importedData.tags) ? importedData.tags : [],
+        };
+
+        handleEditScenario(scenarioToEdit);
+        toast({ title: "Scenario Imported", description: `Scenario "${scenarioToEdit.name}" loaded into editor. Please review and save.` });
+
+      } catch (error: any) {
+        console.error("Error importing scenario:", error);
+        toast({ title: "Import Failed", description: error.message || "Could not parse scenario file.", variant: "destructive" });
+      } finally {
+        // Reset file input to allow importing the same file again if needed
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
+
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Scenario Builder"
-        description="Design, manage, and execute complex RADIUS test scenarios."
+        description="Design, manage, and execute complex RADIUS test scenarios. Drag-and-drop reordering for steps is not yet implemented."
         actions={
-          <Button onClick={() => createNewScenario()}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Create New Scenario
-          </Button>
+          <div className="flex gap-2">
+            <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept=".json" />
+            <Button variant="outline" onClick={handleImportClick}>
+              <Upload className="mr-2 h-4 w-4" /> Import Scenario
+            </Button>
+            <Button onClick={() => createNewScenario()}>
+              <PlusCircle className="mr-2 h-4 w-4" /> Create New Scenario
+            </Button>
+          </div>
         }
       />
 
@@ -498,14 +581,14 @@ export default function ScenariosPage() {
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' ? 'Create New Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-              Define scenario properties, variables, and steps. Conditional logic is visual only for this prototype. API calls are simulated.
+              Define scenario properties, variables, and steps. Conditional logic is visual only for this prototype. API calls are simulated. Step reordering is not yet implemented.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
             <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden">
               {/* Left Panel: Scenario Details & Variables */}
-              <ScrollArea className="md:col-span-1 h-full">
-                <div className="space-y-4 pr-4">
+              <ScrollArea className="md:col-span-1 h-full border rounded-md p-4 bg-muted/20">
+                <div className="space-y-4">
                   <Card>
                     <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
@@ -527,7 +610,7 @@ export default function ScenariosPage() {
                     <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Variable className="h-5 w-5 text-primary"/>Variables</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
                       {editingScenario.variables.map((variable, index) => (
-                        <Card key={variable.id} className="p-3 bg-muted/30">
+                        <Card key={variable.id} className="p-3 bg-card">
                           <div className="flex justify-between items-center mb-1">
                             <Label htmlFor={`var-name-${index}`} className="text-xs font-semibold">Variable {index + 1}</Label>
                             <Button variant="ghost" size="icon" onClick={() => removeVariable(index)} className="h-6 w-6 text-destructive hover:text-destructive">
@@ -556,7 +639,7 @@ export default function ScenariosPage() {
               </ScrollArea>
 
               {/* Right Panel: Scenario Steps */}
-              <div className="md:col-span-2 flex flex-col h-full">
+              <div className="md:col-span-2 flex flex-col h-full border rounded-md p-4 bg-muted/20">
                 <div className="flex justify-between items-center mb-2 flex-shrink-0">
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
                     <DropdownMenu>
@@ -583,7 +666,7 @@ export default function ScenariosPage() {
                       const StepIcon = stepIcons[step.type];
                       return (
                         <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
-                          <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder">
+                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented)">
                             <GripVertical className="h-4 w-4" />
                           </Button>
                           <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100">
@@ -747,6 +830,9 @@ export default function ScenariosPage() {
             </div>
           )}
           <DialogFooter className="mt-auto pt-4 border-t flex-shrink-0">
+            <Button variant="outline" onClick={handleExportScenario} disabled={!editingScenario}>
+                <Download className="mr-2 h-4 w-4" /> Export Scenario
+            </Button>
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
             <Button onClick={handleSaveScenario}><Save className="mr-2 h-4 w-4" /> Save Scenario</Button>
           </DialogFooter>
@@ -755,3 +841,4 @@ export default function ScenariosPage() {
     </div>
   );
 }
+
