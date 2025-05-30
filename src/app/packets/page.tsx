@@ -1,22 +1,21 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Eye, Search, X } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Eye, Search, X, Loader2, MoreHorizontal } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
@@ -27,16 +26,16 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { MoreHorizontal } from "lucide-react"
+} from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
 
-interface RadiusAttribute {
+export interface RadiusAttribute { // Exporting for potential re-use if needed, though API returns full packet
   id: string;
   name: string;
   value: string;
 }
 
-interface RadiusPacket {
+export interface RadiusPacket { // Exporting for API usage
   id: string;
   name: string;
   description: string;
@@ -45,13 +44,7 @@ interface RadiusPacket {
   tags: string[];
 }
 
-const initialPackets: RadiusPacket[] = [
-  { id: 'pkt1', name: '3GPP Access-Request', description: 'Standard 3GPP authentication request.', attributes: [{id: 'attr1', name: 'User-Name', value: 'imsi12345'}, {id: 'attr2', name: 'NAS-Port-Type', value: 'Wireless-IEEE-802.11'}], lastModified: '2024-07-15', tags: ['3GPP', 'Auth'] },
-  { id: 'pkt2', name: 'Cisco VoIP Accounting Start', description: 'Accounting start packet for Cisco VoIP gateway.', attributes: [{id: 'attr3', name: 'Acct-Status-Type', value: 'Start'}, {id: 'attr4', name: 'Cisco-AVPair', value: 'h323-call-id=...'}], lastModified: '2024-07-10', tags: ['Cisco', 'Accounting', 'VoIP'] },
-  { id: 'pkt3', name: 'Generic EAP-TLS Auth', description: 'Basic EAP-TLS auth request.', attributes: [{id: 'attr5', name: 'EAP-Message', value: '...'}, {id: 'attr6', name: 'Message-Authenticator', value: '...'}], lastModified: '2024-06-20', tags: ['EAP', 'Auth'] },
-];
-
-// Mock dictionary for autocomplete
+// Mock dictionary for autocomplete - remains client-side for now
 const dictionaryAttributes = [
   "User-Name", "User-Password", "NAS-IP-Address", "NAS-Port", "Service-Type", 
   "Framed-IP-Address", "Calling-Station-Id", "Called-Station-Id", "Acct-Status-Type", 
@@ -59,34 +52,115 @@ const dictionaryAttributes = [
 ];
 
 export default function PacketsPage() {
-  const [packets, setPackets] = useState<RadiusPacket[]>(initialPackets);
+  const [packets, setPackets] = useState<RadiusPacket[]>([]);
   const [editingPacket, setEditingPacket] = useState<RadiusPacket | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [attributeSearch, setAttributeSearch] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const { toast } = useToast();
+
+  const fetchPackets = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/packets');
+      if (!response.ok) {
+        throw new Error('Failed to fetch packets');
+      }
+      const data = await response.json();
+      setPackets(data);
+    } catch (error) {
+      console.error("Error fetching packets:", error);
+      toast({ title: "Error", description: "Could not fetch packets.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPackets();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredPackets = packets.filter(packet =>
     packet.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    packet.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    packet.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
+    (packet.description && packet.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (Array.isArray(packet.tags) && packet.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
   );
 
   const handleEditPacket = (packet: RadiusPacket | null) => {
-    setEditingPacket(packet ? { ...packet, attributes: [...packet.attributes.map(a => ({...a}))] } : null);
+    setEditingPacket(packet ? JSON.parse(JSON.stringify(packet)) : null); // Deep copy
     setAttributeSearch('');
     setSuggestions([]);
   };
 
-  const handleSavePacket = () => {
-    if (editingPacket) {
-      if (editingPacket.id === 'new') { // New packet
-        setPackets(prev => [...prev, { ...editingPacket, id: `pkt${Date.now()}`, lastModified: new Date().toISOString().split('T')[0] }]);
-      } else { // Existing packet
-        setPackets(prev => prev.map(p => p.id === editingPacket.id ? { ...editingPacket, lastModified: new Date().toISOString().split('T')[0] } : p));
+  const handleSavePacket = async () => {
+    if (!editingPacket) return;
+    setIsSaving(true);
+    
+    const packetDataToSave = {
+      name: editingPacket.name,
+      description: editingPacket.description,
+      attributes: editingPacket.attributes,
+      tags: editingPacket.tags,
+    };
+
+    const isNew = editingPacket.id === 'new';
+    const url = isNew ? '/api/packets' : `/api/packets/${editingPacket.id}`;
+    const method = isNew ? 'POST' : 'PUT';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(packetDataToSave),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to ${isNew ? 'create' : 'update'} packet`);
+      }
+      const savedPacket = await response.json();
+
+      if (isNew) {
+        setPackets(prev => [savedPacket, ...prev]); // Add new packet to the beginning
+      } else {
+        setPackets(prev => prev.map(p => p.id === savedPacket.id ? savedPacket : p));
       }
       handleEditPacket(null); // Close dialog
+      toast({ title: "Packet Saved", description: `Packet "${savedPacket.name}" has been saved.` });
+    } catch (error: any) {
+      console.error(`Error saving packet:`, error);
+      toast({ title: "Save Failed", description: error.message || "Could not save packet.", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
     }
   };
+  
+  const handleDeletePacket = async (packetId: string) => {
+    if (!window.confirm("Are you sure you want to delete this packet?")) return;
+    
+    // Optimistically update UI, or set a deleting state
+    // const originalPackets = [...packets];
+    // setPackets(prev => prev.filter(p => p.id !== packetId));
+
+    try {
+      const response = await fetch(`/api/packets/${packetId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        // setPackets(originalPackets); // Revert if error
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to delete packet');
+      }
+      setPackets(prev => prev.filter(p => p.id !== packetId)); // Confirm removal from UI
+      toast({ title: "Packet Deleted", description: "Packet successfully deleted." });
+    } catch (error: any) {
+      console.error("Error deleting packet:", error);
+      toast({ title: "Delete Failed", description: error.message || "Could not delete packet.", variant: "destructive" });
+      // setPackets(originalPackets); // Revert if error and not using optimistic update for main state
+    }
+  };
+
 
   const handleAttributeChange = (index: number, field: 'name' | 'value', value: string) => {
     if (editingPacket) {
@@ -115,7 +189,7 @@ export default function PacketsPage() {
     if (editingPacket) {
       setEditingPacket({
         ...editingPacket,
-        attributes: [...editingPacket.attributes, { id: `attr${Date.now()}`, name: '', value: '' }],
+        attributes: [...editingPacket.attributes, { id: `attr_client_${Date.now()}`, name: '', value: '' }],
       });
     }
   };
@@ -129,11 +203,11 @@ export default function PacketsPage() {
 
   const createNewPacket = () => {
     handleEditPacket({
-      id: 'new',
+      id: 'new', // Temporary ID for new packet
       name: 'New RADIUS Packet',
       description: '',
-      attributes: [{ id: 'attr_new_1', name: 'User-Name', value: '' }],
-      lastModified: new Date().toISOString().split('T')[0],
+      attributes: [{ id: `attr_client_new_1`, name: 'User-Name', value: '' }],
+      lastModified: new Date().toISOString(), // Placeholder, backend sets actual
       tags: [],
     });
   };
@@ -144,7 +218,7 @@ export default function PacketsPage() {
         title="Packet Editor & Library"
         description="Manage, create, and edit your RADIUS packets."
         actions={
-          <Button onClick={createNewPacket}>
+          <Button onClick={createNewPacket} disabled={isLoading || isSaving}>
             <PlusCircle className="mr-2 h-4 w-4" /> Create New Packet
           </Button>
         }
@@ -160,10 +234,17 @@ export default function PacketsPage() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="max-w-sm"
+              disabled={isLoading}
             />
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center items-center h-40">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-2 text-muted-foreground">Loading packets...</p>
+            </div>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -184,27 +265,27 @@ export default function PacketsPage() {
                       {packet.tags.map(tag => <Badge key={tag} variant="secondary">{tag}</Badge>)}
                     </div>
                   </TableCell>
-                  <TableCell>{packet.lastModified}</TableCell>
+                  <TableCell>{new Date(packet.lastModified).toLocaleDateString()}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0">
+                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={isSaving}>
                           <span className="sr-only">Open menu</span>
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEditPacket(packet)}>
+                        <DropdownMenuItem onClick={() => handleEditPacket(packet)} disabled={isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem disabled> {/* Functionality not implemented */}
                           <Copy className="mr-2 h-4 w-4" /> Duplicate
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem disabled> {/* Functionality not implemented */}
                           <Share2 className="mr-2 h-4 w-4" /> Export
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10">
+                        <DropdownMenuItem onClick={() => handleDeletePacket(packet.id)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -212,7 +293,7 @@ export default function PacketsPage() {
                   </TableCell>
                 </TableRow>
               ))}
-               {filteredPackets.length === 0 && (
+               {!isLoading && filteredPackets.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                     No packets found. Try adjusting your search or create a new packet.
@@ -221,7 +302,13 @@ export default function PacketsPage() {
               )}
             </TableBody>
           </Table>
+          )}
         </CardContent>
+         <CardFooter>
+            <p className="text-sm text-muted-foreground">
+              {isLoading ? "Loading..." : `Showing ${filteredPackets.length} of ${packets.length} packets.`}
+            </p>
+         </CardFooter>
       </Card>
 
       {/* Packet Editor Dialog */}
@@ -241,6 +328,7 @@ export default function PacketsPage() {
                   id="packet-name"
                   value={editingPacket.name}
                   onChange={(e) => setEditingPacket({ ...editingPacket, name: e.target.value })}
+                  disabled={isSaving}
                 />
               </div>
               <div>
@@ -249,6 +337,7 @@ export default function PacketsPage() {
                   id="packet-description"
                   value={editingPacket.description}
                   onChange={(e) => setEditingPacket({ ...editingPacket, description: e.target.value })}
+                  disabled={isSaving}
                 />
               </div>
               <div>
@@ -258,6 +347,7 @@ export default function PacketsPage() {
                   value={editingPacket.tags.join(', ')}
                   onChange={(e) => setEditingPacket({ ...editingPacket, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })}
                   placeholder="e.g., Auth, 3GPP, Test"
+                  disabled={isSaving}
                 />
               </div>
 
@@ -272,6 +362,7 @@ export default function PacketsPage() {
                       onChange={(e) => handleAttributeChange(index, 'name', e.target.value)}
                       placeholder="e.g., User-Name"
                       className="font-mono"
+                      disabled={isSaving}
                     />
                      {attributeSearch === attr.name && suggestions.length > 0 && (
                       <Card className="absolute z-10 mt-1 w-full shadow-lg max-h-40 overflow-y-auto">
@@ -298,21 +389,25 @@ export default function PacketsPage() {
                       onChange={(e) => handleAttributeChange(index, 'value', e.target.value)}
                       placeholder="e.g., testuser"
                       className="font-mono"
+                      disabled={isSaving}
                     />
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => removeAttribute(index)} className="text-destructive hover:text-destructive">
+                  <Button variant="ghost" size="icon" onClick={() => removeAttribute(index)} className="text-destructive hover:text-destructive" disabled={isSaving}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
-              <Button variant="outline" onClick={addAttribute} size="sm">
+              <Button variant="outline" onClick={addAttribute} size="sm" disabled={isSaving}>
                 <PlusCircle className="mr-2 h-4 w-4" /> Add Attribute
               </Button>
             </div>
           )}
           <DialogFooter>
-            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSavePacket}><Save className="mr-2 h-4 w-4" /> Save Packet</Button>
+            <DialogClose asChild><Button variant="outline" disabled={isSaving}>Cancel</Button></DialogClose>
+            <Button onClick={handleSavePacket} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Save Packet
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
