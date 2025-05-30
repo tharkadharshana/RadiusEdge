@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, ChangeEvent } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Eye, Search, X, Loader2, MoreHorizontal, Wand2 } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Search, X, Loader2, MoreHorizontal, Wand2, Settings2, CheckSquare } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,14 +27,60 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
+import { cn } from '@/lib/utils';
 
 export interface RadiusAttribute {
   id: string;
   name: string;
   value: string;
 }
+
+export interface RadClientOptions {
+  server?: string; // e.g., server_ip:port
+  type?: 'auth' | 'acct' | 'status' | 'coa' | 'disconnect' | 'auto';
+  secret?: string;
+  useIPv4?: boolean;
+  useIPv6?: boolean;
+  blastChecks?: boolean;
+  count?: number;
+  raddbDirectory?: string;
+  dictionaryDirectory?: string;
+  inputFile?: string; // file[:file]
+  printFileName?: boolean; // -F
+  requestId?: number; // -i id
+  requestsPerSecond?: number; // -n
+  parallelRequests?: number; // -p
+  protocol?: 'tcp' | 'udp'; // -P proto
+  quietMode?: boolean; // -q
+  retries?: number; // -r num_retries
+  summaries?: boolean; // -s
+  sharedSecretFile?: string; // -S
+  timeout?: number; // -t
+  debug?: boolean; // -x
+}
+
+export interface RadTestOptions {
+  user?: string;
+  password?: string;
+  radiusServer?: string; // server_ip:port
+  nasPortNumber?: number;
+  secret?: string;
+  ppphint?: boolean; // integer > 0 interpreted as true
+  nasname?: string;
+  raddbDirectory?: string; // -d
+  protocol?: 'tcp' | 'udp'; // -P
+  authType?: 'pap' | 'chap' | 'mschap' | 'eap-md5'; // -t
+  debug?: boolean; // -x
+  useIPv4?: boolean; // -4
+  useIPv6?: boolean; // -6
+}
+
+export type ExecutionTool = 'radclient' | 'radtest';
 
 export interface RadiusPacket {
   id: string;
@@ -43,6 +89,8 @@ export interface RadiusPacket {
   attributes: RadiusAttribute[];
   lastModified: string;
   tags: string[];
+  executionTool?: ExecutionTool;
+  toolOptions?: RadClientOptions | RadTestOptions;
 }
 
 // Debounce function
@@ -83,7 +131,10 @@ export default function PacketsPage() {
         throw new Error('Failed to fetch packets');
       }
       const data = await response.json();
-      setPackets(data);
+      setPackets(data.map((p: any) => ({
+        ...p,
+        toolOptions: p.toolOptions ? (typeof p.toolOptions === 'string' ? JSON.parse(p.toolOptions) : p.toolOptions) : undefined
+      })));
     } catch (error) {
       console.error("Error fetching packets:", error);
       toast({ title: "Error", description: "Could not fetch packets.", variant: "destructive" });
@@ -120,6 +171,8 @@ export default function PacketsPage() {
       description: editingPacket.description,
       attributes: editingPacket.attributes,
       tags: editingPacket.tags,
+      executionTool: editingPacket.executionTool,
+      toolOptions: editingPacket.toolOptions,
     };
 
     const isNew = editingPacket.id === 'new';
@@ -138,14 +191,19 @@ export default function PacketsPage() {
         throw new Error(errorData.message || `Failed to ${isNew ? 'create' : 'update'} packet`);
       }
       const savedPacket = await response.json();
+      const processedSavedPacket = {
+        ...savedPacket,
+        toolOptions: savedPacket.toolOptions ? (typeof savedPacket.toolOptions === 'string' ? JSON.parse(savedPacket.toolOptions) : savedPacket.toolOptions) : undefined
+      };
+
 
       if (isNew) {
-        setPackets(prev => [savedPacket, ...prev]);
+        setPackets(prev => [processedSavedPacket, ...prev]);
       } else {
-        setPackets(prev => prev.map(p => p.id === savedPacket.id ? savedPacket : p));
+        setPackets(prev => prev.map(p => p.id === processedSavedPacket.id ? processedSavedPacket : p));
       }
       handleEditPacket(null);
-      toast({ title: "Packet Saved", description: `Packet "${savedPacket.name}" has been saved.` });
+      toast({ title: "Packet Saved", description: `Packet "${processedSavedPacket.name}" has been saved.` });
     } catch (error: any) {
       console.error(`Error saving packet:`, error);
       toast({ title: "Save Failed", description: error.message || "Could not save packet.", variant: "destructive" });
@@ -253,6 +311,8 @@ export default function PacketsPage() {
       attributes: [{ id: `attr_client_new_1`, name: 'User-Name', value: '' }],
       lastModified: new Date().toISOString(),
       tags: [],
+      executionTool: 'radclient',
+      toolOptions: {} as RadClientOptions, // Initialize with empty options for the default tool
     });
   };
 
@@ -283,12 +343,60 @@ export default function PacketsPage() {
     }
   };
 
+  const handleToolChange = (tool: ExecutionTool) => {
+    if (editingPacket) {
+      setEditingPacket({
+        ...editingPacket,
+        executionTool: tool,
+        toolOptions: tool === 'radclient' ? ({} as RadClientOptions) : ({} as RadTestOptions)
+      });
+    }
+  };
+  
+  const handleToolOptionChange = (optionKey: keyof RadClientOptions | keyof RadTestOptions, value: any) => {
+    if (editingPacket && editingPacket.toolOptions) {
+        let parsedValue = value;
+        // Type coercion for number inputs
+        const numericFieldsClient: (keyof RadClientOptions)[] = ['count', 'requestId', 'requestsPerSecond', 'parallelRequests', 'retries', 'timeout'];
+        const numericFieldsTest: (keyof RadTestOptions)[] = ['nasPortNumber'];
+
+        if (editingPacket.executionTool === 'radclient' && numericFieldsClient.includes(optionKey as keyof RadClientOptions)) {
+            parsedValue = value === '' ? undefined : parseInt(value, 10);
+            if (isNaN(parsedValue as number)) parsedValue = undefined; // Or handle as error
+        } else if (editingPacket.executionTool === 'radtest' && numericFieldsTest.includes(optionKey as keyof RadTestOptions)) {
+            parsedValue = value === '' ? undefined : parseInt(value, 10);
+             if (isNaN(parsedValue as number)) parsedValue = undefined;
+        }
+
+
+      setEditingPacket({
+        ...editingPacket,
+        toolOptions: {
+          ...editingPacket.toolOptions,
+          [optionKey]: parsedValue,
+        },
+      });
+    }
+  };
+
+  const handleToolBooleanOptionChange = (optionKey: keyof RadClientOptions | keyof RadTestOptions, checked: boolean) => {
+     if (editingPacket && editingPacket.toolOptions) {
+      setEditingPacket({
+        ...editingPacket,
+        toolOptions: {
+          ...editingPacket.toolOptions,
+          [optionKey]: checked,
+        },
+      });
+    }
+  };
+
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Packet Editor & Library"
-        description="Manage, create, and edit your RADIUS packets."
+        description="Manage, create, and edit your RADIUS packets and their execution tool options."
         actions={
           <Button onClick={createNewPacket} disabled={isLoading || isSaving}>
             <PlusCircle className="mr-2 h-4 w-4" /> Create New Packet
@@ -321,6 +429,7 @@ export default function PacketsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Tool</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Tags</TableHead>
                 <TableHead>Last Modified</TableHead>
@@ -331,6 +440,7 @@ export default function PacketsPage() {
               {filteredPackets.map((packet) => (
                 <TableRow key={packet.id}>
                   <TableCell className="font-medium">{packet.name}</TableCell>
+                  <TableCell><Badge variant="outline">{packet.executionTool || 'N/A'}</Badge></TableCell>
                   <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{packet.description}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
@@ -367,7 +477,7 @@ export default function PacketsPage() {
               ))}
                {!isLoading && filteredPackets.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     No packets found. Try adjusting your search or create a new packet.
                   </TableCell>
                 </TableRow>
@@ -385,15 +495,16 @@ export default function PacketsPage() {
 
       {/* Packet Editor Dialog */}
       <Dialog open={!!editingPacket} onOpenChange={(isOpen) => !isOpen && handleEditPacket(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl"> {/* Increased width */}
           <DialogHeader>
             <DialogTitle>{editingPacket?.id === 'new' ? 'Create New Packet' : `Edit Packet: ${editingPacket?.name}`}</DialogTitle>
             <DialogDescription>
-              Modify packet details and attributes. Use autocomplete for attribute names or paste a block of text.
+              Modify packet details, attributes, and select execution tool options.
             </DialogDescription>
           </DialogHeader>
           {editingPacket && (
-            <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto pr-2">
+          <ScrollArea className="max-h-[75vh] pr-6">
+            <div className="space-y-4 py-4">
               <div>
                 <Label htmlFor="packet-name">Packet Name</Label>
                 <Input
@@ -423,7 +534,107 @@ export default function PacketsPage() {
                 />
               </div>
 
-              <h3 className="text-lg font-semibold pt-2">Attributes</h3>
+              <h3 className="text-lg font-semibold pt-2 flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary" /> Execution Tool Options</h3>
+              <div>
+                <Label htmlFor="execution-tool">Tool</Label>
+                <Select value={editingPacket.executionTool || 'radclient'} onValueChange={(value) => handleToolChange(value as ExecutionTool)}>
+                  <SelectTrigger id="execution-tool"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="radclient">radclient</SelectItem>
+                    <SelectItem value="radtest">radtest</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {editingPacket.executionTool === 'radclient' && editingPacket.toolOptions && (
+                <Card className="p-4 bg-muted/30">
+                  <CardHeader className="p-0 pb-2 mb-2 border-b"><CardTitle className="text-md">Radclient Options</CardTitle></CardHeader>
+                  <CardContent className="p-0 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div><Label>Server[:Port]</Label><Input value={(editingPacket.toolOptions as RadClientOptions).server || ''} onChange={e => handleToolOptionChange('server', e.target.value)} placeholder="e.g., 127.0.0.1:1812" /></div>
+                    <div><Label>Type</Label>
+                      <Select value={(editingPacket.toolOptions as RadClientOptions).type || 'auth'} onValueChange={val => handleToolOptionChange('type', val)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auth">auth (Access-Request)</SelectItem>
+                          <SelectItem value="acct">acct (Accounting-Request)</SelectItem>
+                          <SelectItem value="status">status (Status-Server)</SelectItem>
+                          <SelectItem value="coa">coa (CoA-Request)</SelectItem>
+                          <SelectItem value="disconnect">disconnect (Disconnect-Request)</SelectItem>
+                          <SelectItem value="auto">auto (from Packet-Type attribute)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div><Label>Shared Secret</Label><Input type="password" value={(editingPacket.toolOptions as RadClientOptions).secret || ''} onChange={e => handleToolOptionChange('secret', e.target.value)} placeholder="Packet-specific secret" /></div>
+                    <div><Label>Count</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).count || ''} onChange={e => handleToolOptionChange('count', e.target.value)} placeholder="1" /></div>
+                    <div><Label>Retries</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).retries || ''} onChange={e => handleToolOptionChange('retries', e.target.value)} placeholder="10" /></div>
+                    <div><Label>Timeout (sec)</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).timeout || ''} onChange={e => handleToolOptionChange('timeout', e.target.value)} placeholder="3" /></div>
+                    <div><Label>Requests/sec</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).requestsPerSecond || ''} onChange={e => handleToolOptionChange('requestsPerSecond', e.target.value)} placeholder="Optional" /></div>
+                    <div><Label>Parallel Requests</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).parallelRequests || ''} onChange={e => handleToolOptionChange('parallelRequests', e.target.value)} placeholder="Optional" /></div>
+                    <div><Label>Request ID</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).requestId || ''} onChange={e => handleToolOptionChange('requestId', e.target.value)} placeholder="Optional" /></div>
+                    <div><Label>Protocol</Label>
+                      <Select value={(editingPacket.toolOptions as RadClientOptions).protocol || 'udp'} onValueChange={val => handleToolOptionChange('protocol', val)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="udp">udp</SelectItem><SelectItem value="tcp">tcp</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-ipv4" checked={(editingPacket.toolOptions as RadClientOptions).useIPv4} onCheckedChange={val => handleToolBooleanOptionChange('useIPv4', !!val)} /><Label htmlFor="rc-ipv4">Use IPv4 (-4)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-ipv6" checked={(editingPacket.toolOptions as RadClientOptions).useIPv6} onCheckedChange={val => handleToolBooleanOptionChange('useIPv6', !!val)} /><Label htmlFor="rc-ipv6">Use IPv6 (-6)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-blast" checked={(editingPacket.toolOptions as RadClientOptions).blastChecks} onCheckedChange={val => handleToolBooleanOptionChange('blastChecks', !!val)} /><Label htmlFor="rc-blast">Blast RADIUS Checks (-b)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-printfile" checked={(editingPacket.toolOptions as RadClientOptions).printFileName} onCheckedChange={val => handleToolBooleanOptionChange('printFileName', !!val)} /><Label htmlFor="rc-printfile">Print File Name (-F)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-quiet" checked={(editingPacket.toolOptions as RadClientOptions).quietMode} onCheckedChange={val => handleToolBooleanOptionChange('quietMode', !!val)} /><Label htmlFor="rc-quiet">Quiet Mode (-q)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-summaries" checked={(editingPacket.toolOptions as RadClientOptions).summaries} onCheckedChange={val => handleToolBooleanOptionChange('summaries', !!val)} /><Label htmlFor="rc-summaries">Summaries (-s)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rc-debug" checked={(editingPacket.toolOptions as RadClientOptions).debug} onCheckedChange={val => handleToolBooleanOptionChange('debug', !!val)} /><Label htmlFor="rc-debug">Debug (-x)</Label></div>
+                    
+                    <div className="md:col-span-2 space-y-1">
+                      <Label>Raddb Directory (-d)</Label><Input value={(editingPacket.toolOptions as RadClientOptions).raddbDirectory || ''} onChange={e => handleToolOptionChange('raddbDirectory', e.target.value)} placeholder="/etc/raddb" />
+                      <Label>Dictionary Directory (-D)</Label><Input value={(editingPacket.toolOptions as RadClientOptions).dictionaryDirectory || ''} onChange={e => handleToolOptionChange('dictionaryDirectory', e.target.value)} placeholder="/usr/share/freeradius" />
+                      <Label>Input File (-f)</Label><Input value={(editingPacket.toolOptions as RadClientOptions).inputFile || ''} onChange={e => handleToolOptionChange('inputFile', e.target.value)} placeholder="path/to/file or file1:file2" />
+                      <Label>Shared Secret File (-S)</Label><Input value={(editingPacket.toolOptions as RadClientOptions).sharedSecretFile || ''} onChange={e => handleToolOptionChange('sharedSecretFile', e.target.value)} placeholder="path/to/secretfile" />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {editingPacket.executionTool === 'radtest' && editingPacket.toolOptions && (
+                 <Card className="p-4 bg-muted/30">
+                  <CardHeader className="p-0 pb-2 mb-2 border-b"><CardTitle className="text-md">Radtest Options</CardTitle></CardHeader>
+                  <CardContent className="p-0 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div><Label>User</Label><Input value={(editingPacket.toolOptions as RadTestOptions).user || ''} onChange={e => handleToolOptionChange('user', e.target.value)} /></div>
+                    <div><Label>Password</Label><Input type="password" value={(editingPacket.toolOptions as RadTestOptions).password || ''} onChange={e => handleToolOptionChange('password', e.target.value)} /></div>
+                    <div><Label>RADIUS Server[:Port]</Label><Input value={(editingPacket.toolOptions as RadTestOptions).radiusServer || ''} onChange={e => handleToolOptionChange('radiusServer', e.target.value)} /></div>
+                    <div><Label>NAS Port Number</Label><Input type="number" value={(editingPacket.toolOptions as RadTestOptions).nasPortNumber || ''} onChange={e => handleToolOptionChange('nasPortNumber', e.target.value)} placeholder="10" /></div>
+                    <div><Label>Shared Secret</Label><Input type="password" value={(editingPacket.toolOptions as RadTestOptions).secret || ''} onChange={e => handleToolOptionChange('secret', e.target.value)} /></div>
+                    <div><Label>NAS Name</Label><Input value={(editingPacket.toolOptions as RadTestOptions).nasname || ''} onChange={e => handleToolOptionChange('nasname', e.target.value)} placeholder="Local hostname if blank" /></div>
+                    <div><Label>Auth Type (-t)</Label>
+                        <Select value={(editingPacket.toolOptions as RadTestOptions).authType || 'pap'} onValueChange={val => handleToolOptionChange('authType', val)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                            <SelectItem value="pap">pap</SelectItem>
+                            <SelectItem value="chap">chap</SelectItem>
+                            <SelectItem value="mschap">mschap</SelectItem>
+                            <SelectItem value="eap-md5">eap-md5</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div><Label>Protocol (-P)</Label>
+                      <Select value={(editingPacket.toolOptions as RadTestOptions).protocol || 'udp'} onValueChange={val => handleToolOptionChange('protocol', val)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="udp">udp</SelectItem><SelectItem value="tcp">tcp</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rt-ppphint" checked={(editingPacket.toolOptions as RadTestOptions).ppphint} onCheckedChange={val => handleToolBooleanOptionChange('ppphint', !!val)} /><Label htmlFor="rt-ppphint">PPP Hint (Framed-Protocol=PPP)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rt-debug" checked={(editingPacket.toolOptions as RadTestOptions).debug} onCheckedChange={val => handleToolBooleanOptionChange('debug', !!val)} /><Label htmlFor="rt-debug">Debug (-x)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rt-ipv4" checked={(editingPacket.toolOptions as RadTestOptions).useIPv4} onCheckedChange={val => handleToolBooleanOptionChange('useIPv4', !!val)} /><Label htmlFor="rt-ipv4">Use NAS-IP-Address (-4)</Label></div>
+                    <div className="flex items-center space-x-2"><Checkbox id="rt-ipv6" checked={(editingPacket.toolOptions as RadTestOptions).useIPv6} onCheckedChange={val => handleToolBooleanOptionChange('useIPv6', !!val)} /><Label htmlFor="rt-ipv6">Use NAS-IPv6-Address (-6)</Label></div>
+                    <div className="md:col-span-2 space-y-1">
+                        <Label>Raddb Directory (-d)</Label><Input value={(editingPacket.toolOptions as RadTestOptions).raddbDirectory || ''} onChange={e => handleToolOptionChange('raddbDirectory', e.target.value)} placeholder="/etc/raddb" />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+
+              <h3 className="text-lg font-semibold pt-4">Attributes</h3>
               <div className="space-y-2 pt-2 border p-3 rounded-md bg-muted/20">
                 <Label className="font-medium">Paste Attributes from Text:</Label>
                 <Textarea
@@ -456,11 +667,10 @@ export default function PacketsPage() {
                       onChange={(e) => handleAttributeChange(index, 'name', e.target.value)}
                       onFocus={() => {
                         setActiveSuggestionIndex(index);
-                        // Optionally, if current attr.name is not empty, trigger initial suggestion fetch
                         if(attr.name.trim()){
                             debouncedFetchAttributeSuggestions(attr.name, index);
                         } else {
-                            setSuggestions([]); // Clear if name is empty on focus
+                            setSuggestions([]);
                         }
                       }}
                       placeholder="e.g., User-Name"
@@ -509,8 +719,9 @@ export default function PacketsPage() {
                 <PlusCircle className="mr-2 h-4 w-4" /> Add Attribute Manually
               </Button>
             </div>
+          </ScrollArea>
           )}
-          <DialogFooter>
+          <DialogFooter className="mt-auto pt-4 border-t flex-shrink-0">
             <DialogClose asChild><Button variant="outline" disabled={isSaving || isParsingAttributes}>Cancel</Button></DialogClose>
             <Button onClick={handleSavePacket} disabled={isSaving || isParsingAttributes}>
               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -523,3 +734,4 @@ export default function PacketsPage() {
   );
 }
 
+    

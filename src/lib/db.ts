@@ -72,7 +72,8 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       name: 'packets',
       sql: `CREATE TABLE IF NOT EXISTS packets (
               id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
-              attributes TEXT, lastModified TEXT, tags TEXT
+              attributes TEXT, lastModified TEXT, tags TEXT,
+              executionTool TEXT, toolOptions TEXT
             );`
     },
     {

@@ -22,6 +22,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
       ...packetFromDb,
       attributes: packetFromDb.attributes ? JSON.parse(packetFromDb.attributes as string) : [],
       tags: packetFromDb.tags ? JSON.parse(packetFromDb.tags as string) : [],
+      toolOptions: packetFromDb.toolOptions ? JSON.parse(packetFromDb.toolOptions as string) : undefined,
     } as RadiusPacket;
 
     return NextResponse.json(packet);
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
 export async function PUT(request: NextRequest, { params }: { params: Params }) {
   try {
     const body = await request.json();
-    const { name, description, attributes, tags } = body as Omit<RadiusPacket, 'id' | 'lastModified'>;
+    const { name, description, attributes, tags, executionTool, toolOptions } = body as Omit<RadiusPacket, 'id' | 'lastModified'>;
 
     if (!name) {
       return NextResponse.json({ message: 'Packet name is required' }, { status: 400 });
@@ -52,16 +53,20 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       description: description !== undefined ? description : existingPacket.description,
       attributes: attributes !== undefined ? JSON.stringify(attributes) : existingPacket.attributes,
       tags: tags !== undefined ? JSON.stringify(tags) : existingPacket.tags,
+      executionTool: executionTool || existingPacket.executionTool,
+      toolOptions: toolOptions !== undefined ? JSON.stringify(toolOptions) : existingPacket.toolOptions,
       lastModified: new Date().toISOString(),
     };
 
     const result = await db.run(
-      'UPDATE packets SET name = ?, description = ?, attributes = ?, lastModified = ?, tags = ? WHERE id = ?',
+      'UPDATE packets SET name = ?, description = ?, attributes = ?, lastModified = ?, tags = ?, executionTool = ?, toolOptions = ? WHERE id = ?',
       updatedPacketData.name,
       updatedPacketData.description,
       updatedPacketData.attributes,
       updatedPacketData.lastModified,
       updatedPacketData.tags,
+      updatedPacketData.executionTool,
+      updatedPacketData.toolOptions,
       params.id
     );
 
@@ -78,6 +83,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       ...updatedPacket,
       attributes: updatedPacket.attributes ? JSON.parse(updatedPacket.attributes as string) : [],
       tags: updatedPacket.tags ? JSON.parse(updatedPacket.tags as string) : [],
+      toolOptions: updatedPacket.toolOptions ? JSON.parse(updatedPacket.toolOptions as string) : undefined,
     } as RadiusPacket;
 
     return NextResponse.json(packetToReturn);
@@ -103,3 +109,5 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
     return NextResponse.json({ message: `Failed to delete packet ${params.id}`, error: (error as Error).message }, { status: 500 });
   }
 }
+
+    
