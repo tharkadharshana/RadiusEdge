@@ -18,7 +18,7 @@ const ClientTestStepSchema = z.object({
   name: z.string().describe('The user-defined name of the test step.'),
   command: z.string().describe('The command to be (simulated) executed for this step.'),
   isEnabled: z.boolean().describe('Whether this step should be executed.'),
-  isMandatory: z.boolean().optional().describe('Indicates if the step is considered mandatory by the client.'),
+  isMandatory: z.boolean().optional().describe('Indicates if the step is considered mandatory by the client (UI may prevent disabling/deleting).'),
   type: z.enum(['default', 'custom']).optional().describe('The type of step, for client-side differentiation.'),
   expectedOutputContains: z.string().optional().describe('A substring that the simulated output must contain for the step to be considered successful.'),
 });
@@ -94,7 +94,7 @@ async function simulateStepExecution(
     let successRate = 0.85; 
     let simulatedOutput = `Simulated output for command: ${interpolatedCommand}\n... processing ...`;
     let simulatedError;
-    let isSuccess = false;
+    let isSuccess = false; // Default to false, prove success
 
     // Determine success rate and output based on command
     if (cmdLower.includes('ssh ')) {
@@ -142,22 +142,21 @@ async function simulateStepExecution(
         }
     } else { // Custom command or other default command not specifically handled above
         simulatedOutput = `Simulating custom command: ${interpolatedCommand}\nCustom script output example... Operation completed.`;
-        // For custom, we rely on the default successRate or specific error simulation, then check expectedOutputContains
-        if (Math.random() >= successRate) {
+        if (Math.random() >= successRate) { // Generic random failure for unhandled/custom commands
             simulatedError = `Simulated error for custom command: ${interpolatedCommand}`;
             simulatedOutput = `Simulated failure for custom command: ${interpolatedCommand}\nError: Something went wrong during execution.`;
         }
     }
     
-    // Determine success based on expectedOutputContains if provided, otherwise by lack of simulatedError
+    // Determine success based on expectedOutputContains if provided
     if (stepConfig.expectedOutputContains) {
         if (!simulatedError && simulatedOutput.includes(stepConfig.expectedOutputContains)) {
             isSuccess = true;
         } else {
-            isSuccess = false;
+            isSuccess = false; // Remains false or set explicitly
             if (!simulatedError) { // If no explicit error was simulated but expected output is missing
                  simulatedError = `Expected output substring "${stepConfig.expectedOutputContains}" not found in simulated output.`;
-                 simulatedOutput += `\n[INFO] Expected output check failed.`;
+                 simulatedOutput += `\n[VALIDATION] Expected output check failed.`;
             }
         }
     } else { // Fallback to original logic if no expectedOutputContains is given
@@ -176,16 +175,26 @@ async function simulateStepExecution(
 
 export async function testServerConnection(input: TestServerConnectionInput): Promise<TestServerConnectionOutput> {
   const results: TestServerConnectionStepResult[] = [];
+  let executionShouldHalt = false; 
   let overallStatus: TestServerConnectionOutput['overallStatus'] = 'testing';
-  let criticalFailureEncountered = false;
 
   for (const stepConfig of input.stepsToExecute) {
-    if (criticalFailureEncountered && stepConfig.isMandatory) { 
+    if (executionShouldHalt) {
+      results.push({
+        stepName: stepConfig.name,
+        status: 'skipped',
+        command: interpolateCommand(stepConfig.command, input), // Interpolate even for skipped for consistency in display
+        output: 'Skipped due to previous critical failure.',
+      });
+      continue;
+    }
+
+    if (!stepConfig.isEnabled) {
         results.push({
             stepName: stepConfig.name,
             status: 'skipped',
             command: interpolateCommand(stepConfig.command, input),
-            output: 'Skipped due to previous critical failure on a mandatory step.',
+            output: 'Step was disabled by user.',
         });
         continue;
     }
@@ -193,40 +202,52 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
     const stepResult = await simulateStepExecution(stepConfig, input);
     results.push(stepResult);
 
-    if (stepResult.status === 'failure' && stepConfig.isMandatory) {
-        criticalFailureEncountered = true;
+    if (stepResult.status === 'failure') {
+      // Check if this step was mandatory or if any failure should halt
+      // For now, any failure on an enabled step halts execution.
+      executionShouldHalt = true; 
     }
   }
   
-  const hasAnyFailure = results.some(r => r.status === 'failure');
-  const allEnabledStepsSucceededOrSkipped = results.filter(r => input.stepsToExecute.find(s => s.name === r.stepName)?.isEnabled)
-                                               .every(r => r.status === 'success' || r.status === 'skipped');
-  const hasMandatorySuccess = results.some((r,i) => r.status === 'success' && input.stepsToExecute[i].isMandatory);
-  
-  if (criticalFailureEncountered) {
+  // Determine overallStatus based on results
+  if (executionShouldHalt) {
     overallStatus = 'failure';
-  } else if (hasAnyFailure) {
-    overallStatus = 'partial'; // Some non-mandatory steps failed
-  } else if (allEnabledStepsSucceededOrSkipped && hasMandatorySuccess) {
-    overallStatus = 'success'; // All enabled steps (including mandatory ones) passed or were skipped (if not mandatory)
-  } else if (results.every(r => r.status === 'skipped')) {
-    overallStatus = 'partial'; // Or perhaps 'unknown' or 'not_tested' if all were skipped
   } else {
-     overallStatus = 'success'; // Default if no failures and not all skipped
-  }
-  
-  // Check if any actual work was done
-  const successfulSteps = results.filter(r => r.status === 'success');
-  if (successfulSteps.length === 0 && !results.some(r => r.status === 'failure')) {
-      // All steps were skipped, or no steps were enabled.
-      if(results.length > 0 && results.every(r => r.status === 'skipped')) {
-         overallStatus = 'partial'; // All steps were skipped
+    // If execution didn't halt, check if any enabled steps were actually run
+    const enabledStepConfigs = input.stepsToExecute.filter(s => s.isEnabled);
+    if (enabledStepConfigs.length === 0) {
+      // No steps were enabled to run. Could be considered 'partial' or 'success' if that's desired.
+      // For now, let's say 'partial' to indicate nothing substantial was tested.
+      overallStatus = 'partial'; 
+    } else {
+      // All enabled steps were attempted (none were skipped due to halt)
+      // and all of them must have succeeded (or were user-disabled and thus skipped, which is fine)
+      const relevantResults = results.filter(r => {
+          const originalStep = input.stepsToExecute.find(s => s.name === r.stepName);
+          return originalStep?.isEnabled; // Only consider results for steps that were enabled
+      });
+
+      if (relevantResults.length > 0 && relevantResults.every(r => r.status === 'success')) {
+        overallStatus = 'success';
       } else {
-         // No steps or no enabled steps, perhaps mark differently if needed
-         overallStatus = 'partial'; 
+        // This case implies some enabled steps didn't succeed, or no enabled steps ran to completion.
+        // Given the halt logic, if we get here and it's not 'success', it's likely 'partial'
+        // (e.g., all steps were disabled by user but no failures occurred).
+        overallStatus = 'partial'; 
       }
+    }
   }
 
+  // Final check if overallStatus is still 'testing' (e.g., no steps in input at all)
+  if (overallStatus === 'testing') {
+      if (input.stepsToExecute.length === 0) {
+          overallStatus = 'partial'; // No steps to execute.
+      } else {
+          // If all steps were disabled, it would already be 'partial'.
+          // This path might not be hit often with current logic.
+          overallStatus = 'partial'; // Default if not clearly success or failure
+      }
+  }
 
   return { overallStatus, steps: results };
 }
@@ -240,11 +261,8 @@ const testServerConnectionInternalFlow = ai.defineFlow(
     outputSchema: TestServerConnectionOutputSchema,
   },
   async (input) => {
-    // Call the exported async function directly for simulation
     return testServerConnection(input);
   }
 );
-// The actual `testServerConnection` async function is exported and used by the UI.
-// Schemas (ClientTestStepSchema, etc.) are defined but not directly exported from this 'use server' file.
-// Only types (ClientTestStep, TestServerConnectionInput, TestServerConnectionOutput) are exported alongside the main function.
-
+// Schemas are defined above but not exported from this file to comply with 'use server' requirements.
+// Only types (ClientTestStep, etc.) and the main async function 'testServerConnection' are exported.
