@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,14 +10,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle, Edit3, Trash2, Save, Server as ServerIcon, KeyRound, ShieldCheck, MoreHorizontal, Loader2, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Save, Server as ServerIcon, KeyRound, ShieldCheck, MoreHorizontal, Loader2, CheckCircle, XCircle, AlertTriangle, ListChecks, Settings, GripVertical, PlayCircle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
@@ -29,13 +28,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { testServerConnection, TestServerConnectionInput, TestServerConnectionOutput, TestServerConnectionStep } from '@/ai/flows/test-server-connection-flow';
+import { testServerConnection, TestServerConnectionInput, TestServerConnectionOutput } from '@/ai/flows/test-server-connection-flow';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { Switch } from '@/components/ui/switch';
+
+// Renamed for clarity from Genkit flow output
+type TestStepResult = TestServerConnectionOutput['steps'][0];
 
 
 type ServerStatus = 'connected' | 'disconnected' | 'unknown' | 'testing' | 'error_ssh' | 'error_config' | 'error_service' | 'issues_found';
+
+interface TestStepConfig {
+  id: string;
+  name: string;
+  command: string;
+  isEnabled: boolean;
+  isMandatory: boolean;
+  type: 'default' | 'custom'; // For potential future differentiation
+}
 
 interface ServerConfig {
   id: string;
@@ -45,18 +57,38 @@ interface ServerConfig {
   sshPort: number;
   sshUser: string;
   authMethod: 'key' | 'password';
-  privateKey?: string; // For storing actual key content
-  password?: string; // For storing password
+  privateKey?: string;
+  password?: string;
   radiusAuthPort: number;
   radiusAcctPort: number;
   defaultSecret: string;
   nasSpecificSecrets?: Record<string, string>;
-  status?: ServerStatus; 
+  status?: ServerStatus;
+  testSteps: TestStepConfig[];
 }
 
+const getDefaultTestSteps = (): TestStepConfig[] => [
+  { id: 'step_ssh', name: 'SSH Connection Attempt', command: 'ssh ${sshUser}@${host} -p ${sshPort}', isEnabled: true, isMandatory: true, type: 'default' },
+  { id: 'step_radclient', name: 'Check for radclient', command: 'which radclient', isEnabled: true, isMandatory: false, type: 'default' },
+  { id: 'step_radtest', name: 'Check for radtest', command: 'which radtest', isEnabled: true, isMandatory: false, type: 'default' },
+  { id: 'step_config_val', name: 'Validate RADIUS Config', command: '${serverType === "freeradius" ? "freeradius" : "radiusd"} -XC', isEnabled: true, isMandatory: true, type: 'default' },
+  { id: 'step_service_status', name: 'Check RADIUS Service Status', command: 'systemctl status ${serverType === "freeradius" ? "freeradius" : "radiusd"}', isEnabled: true, isMandatory: true, type: 'default' },
+];
+
+
 const initialServerConfigs: ServerConfig[] = [
-  { id: 'srv1', name: 'EU-Prod-FR-01', type: 'freeradius', host: 'radius-eu.example.com', sshPort: 22, sshUser: 'radius-admin', authMethod: 'key', radiusAuthPort: 1812, radiusAcctPort: 1813, defaultSecret: 'secret123', status: 'unknown' },
-  { id: 'srv2', name: 'US-Staging-Custom', type: 'custom', host: 'staging-us-radius.example.net', sshPort: 22022, sshUser: 'deploy', authMethod: 'password', radiusAuthPort: 11812, radiusAcctPort: 11813, defaultSecret: 'staging_secret', status: 'unknown' },
+  { 
+    id: 'srv1', name: 'EU-Prod-FR-01', type: 'freeradius', host: 'radius-eu.example.com', 
+    sshPort: 22, sshUser: 'radius-admin', authMethod: 'key', 
+    radiusAuthPort: 1812, radiusAcctPort: 1813, defaultSecret: 'secret123', 
+    status: 'unknown', testSteps: getDefaultTestSteps() 
+  },
+  { 
+    id: 'srv2', name: 'US-Staging-Custom', type: 'custom', host: 'staging-us-radius.example.net', 
+    sshPort: 22022, sshUser: 'deploy', authMethod: 'password', 
+    radiusAuthPort: 11812, radiusAcctPort: 11813, defaultSecret: 'staging_secret', 
+    status: 'unknown', testSteps: getDefaultTestSteps()
+  },
 ];
 
 export default function ServerConfigPage() {
@@ -71,7 +103,7 @@ export default function ServerConfigPage() {
   const { toast } = useToast();
 
   const handleEditConfig = (config: ServerConfig | null) => {
-    setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null); 
+    setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null);
     setNasSecretKey('');
     setNasSecretValue('');
   };
@@ -104,6 +136,7 @@ export default function ServerConfigPage() {
       defaultSecret: '',
       nasSpecificSecrets: {},
       status: 'unknown',
+      testSteps: getDefaultTestSteps(),
     });
   };
 
@@ -127,6 +160,36 @@ export default function ServerConfigPage() {
       }
   };
 
+  const handleTestStepChange = (index: number, field: keyof TestStepConfig, value: any) => {
+    if (editingConfig) {
+      const updatedTestSteps = [...editingConfig.testSteps];
+      (updatedTestSteps[index] as any)[field] = value;
+      setEditingConfig({ ...editingConfig, testSteps: updatedTestSteps });
+    }
+  };
+
+  const addCustomTestStep = () => {
+    if (editingConfig) {
+      const newStep: TestStepConfig = {
+        id: `custom_step_${Date.now()}`,
+        name: 'New Custom Step',
+        command: '',
+        isEnabled: true,
+        isMandatory: false,
+        type: 'custom',
+      };
+      setEditingConfig({ ...editingConfig, testSteps: [...editingConfig.testSteps, newStep] });
+    }
+  };
+
+  const removeTestStep = (index: number) => {
+    if (editingConfig && !editingConfig.testSteps[index].isMandatory) {
+      const updatedTestSteps = editingConfig.testSteps.filter((_, i) => i !== index);
+      setEditingConfig({ ...editingConfig, testSteps: updatedTestSteps });
+    }
+  };
+  
+
   const handleTestConnection = async (configToTest: ServerConfig) => {
     setTestingServerId(configToTest.id);
     setTestConnectionResult(null);
@@ -143,6 +206,13 @@ export default function ServerConfigPage() {
         privateKey: configToTest.privateKey,
         password: configToTest.password,
         serverType: configToTest.type,
+        stepsToExecute: configToTest.testSteps.map(s => ({ 
+            name: s.name,
+            command: s.command,
+            isEnabled: s.isEnabled,
+            isMandatory: s.isMandatory, 
+            type: s.type
+        })),
       };
       const result = await testServerConnection(input);
       setTestConnectionResult(result);
@@ -150,12 +220,12 @@ export default function ServerConfigPage() {
       let newStatus: ServerStatus = 'unknown';
       if (result.overallStatus === 'success') newStatus = 'connected';
       else if (result.overallStatus === 'failure') {
-        const sshFailed = result.steps.find(s => s.stepName === 'SSH Connection' && s.status === 'failure');
+        const sshFailed = result.steps.find(s => s.stepName.toLowerCase().includes('ssh') && s.status === 'failure');
         if (sshFailed) newStatus = 'error_ssh';
         else {
-            const configFailed = result.steps.find(s => s.stepName.includes('Validate RADIUS Configuration') && s.status === 'failure');
+            const configFailed = result.steps.find(s => s.stepName.toLowerCase().includes('validate radius config') && s.status === 'failure');
             if (configFailed) newStatus = 'error_config';
-            else newStatus = 'error_service'; // Generic service or other critical failure
+            else newStatus = 'error_service';
         }
       } else if (result.overallStatus === 'partial') newStatus = 'issues_found';
       
@@ -165,20 +235,20 @@ export default function ServerConfigPage() {
     } catch (error) {
       console.error("Error testing connection:", error);
       setTestConnectionError(error instanceof Error ? error.message : "An unknown error occurred during the test.");
-      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'unknown' } : c)); // Revert status
+      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'unknown' } : c));
       toast({ title: "Connection Test Failed", description: "Could not run the connection test.", variant: "destructive" });
     }
   };
 
   const getStatusBadge = (status?: ServerStatus) => {
     switch (status) {
-      case 'connected': return <Badge variant="default" className="bg-green-500/20 text-green-700 border-green-400 dark:bg-green-700/30 dark:text-green-300 dark:border-green-600">Connected</Badge>;
+      case 'connected': return <Badge variant="default" className="bg-green-100 text-green-700 border-green-300 dark:bg-green-700/30 dark:text-green-300 dark:border-green-600">Connected</Badge>;
       case 'disconnected': return <Badge variant="destructive">Disconnected</Badge>;
       case 'testing': return <Badge variant="outline" className="text-blue-600 border-blue-400 dark:text-blue-400 dark:border-blue-500"><Loader2 className="mr-1 h-3 w-3 animate-spin" />Testing...</Badge>;
-      case 'error_ssh': return <Badge variant="destructive" className="bg-red-500/20 text-red-700 border-red-400 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">SSH Error</Badge>;
-      case 'error_config': return <Badge variant="destructive" className="bg-orange-500/20 text-orange-700 border-orange-400 dark:bg-orange-700/30 dark:text-orange-300 dark:border-orange-600">Config Error</Badge>;
-      case 'error_service': return <Badge variant="destructive" className="bg-yellow-500/20 text-yellow-700 border-yellow-400 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Service Error</Badge>;
-      case 'issues_found': return <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-700 border-yellow-400 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Issues Found</Badge>;
+      case 'error_ssh': return <Badge variant="destructive" className="bg-red-100 text-red-700 border-red-300 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">SSH Error</Badge>;
+      case 'error_config': return <Badge variant="destructive" className="bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-700/30 dark:text-orange-300 dark:border-orange-600">Config Error</Badge>;
+      case 'error_service': return <Badge variant="destructive" className="bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Service Error</Badge>;
+      case 'issues_found': return <Badge variant="secondary" className="bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Issues Found</Badge>;
       case 'unknown':
       default: return <Badge variant="outline">Unknown</Badge>;
     }
@@ -232,7 +302,7 @@ export default function ServerConfigPage() {
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleTestConnection(config)} disabled={!!testingServerId}>
-                          <ShieldCheck className="mr-2 h-4 w-4" /> Test Connection
+                          <PlayCircle className="mr-2 h-4 w-4" /> Test Connection
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!testingServerId}>
@@ -250,19 +320,19 @@ export default function ServerConfigPage() {
 
       {/* Server Config Editor Dialog */}
       <Dialog open={!!editingConfig} onOpenChange={(isOpen) => !isOpen && handleEditConfig(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl"> {/* Increased width */}
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
                 <ServerIcon className="h-6 w-6 text-primary" />
                 {editingConfig?.id === 'new' ? 'Add New Server Configuration' : `Edit Server: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Provide connection details for your RADIUS server. SSH details are for simulated tests.
+              Provide connection details and customize the (simulated) test sequence.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
-            <ScrollArea className="max-h-[70vh] pr-6">
-            <div className="space-y-4 py-4">
+            <ScrollArea className="max-h-[70vh] pr-2 -mr-6 pl-1"> {/* Adjusted padding for scrollbar */}
+            <div className="space-y-6 py-4 pr-4"> {/* Added pr-4 to content for spacing from scrollbar */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="server-name">Configuration Name</Label>
@@ -282,7 +352,7 @@ export default function ServerConfigPage() {
               </div>
               
               <div>
-                <Label htmlFor="server-host">Hostname or IP Address</Label>
+                <Label htmlFor="server-host">Hostname or IP Address (for RADIUS client)</Label>
                 <Input id="server-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="radius.example.com" />
               </div>
 
@@ -345,7 +415,7 @@ export default function ServerConfigPage() {
                     {Object.entries(editingConfig.nasSpecificSecrets || {}).map(([key, value]) => (
                         <div key={key} className="flex items-center gap-2">
                             <Input value={key} readOnly className="font-mono"/>
-                            <Input type="password" value={value} readOnly className="font-mono"/> {/* Changed to password for display */}
+                            <Input type="password" value={value} readOnly className="font-mono"/>
                             <Button variant="ghost" size="icon" onClick={() => handleNasSecretChange(key, '', 'remove')} className="text-destructive h-8 w-8">
                                 <Trash2 className="h-4 w-4"/>
                             </Button>
@@ -353,11 +423,67 @@ export default function ServerConfigPage() {
                     ))}
                      <div className="flex items-end gap-2 pt-2">
                         <div className="flex-1"><Label htmlFor="nas-key" className="text-xs">NAS Identifier (IP/Name)</Label><Input id="nas-key" value={nasSecretKey} onChange={(e) => setNasSecretKey(e.target.value)} placeholder="e.g., 10.0.0.1 or nas-01"/></div>
-                        <div className="flex-1"><Label htmlFor="nas-value" className="text-xs">Secret</Label><Input id="nas-value" type="text" value={nasSecretValue} onChange={(e) => setNasSecretValue(e.target.value)} placeholder="Secret for this NAS"/></div> {/* Changed to text for inputting */}
+                        <div className="flex-1"><Label htmlFor="nas-value" className="text-xs">Secret</Label><Input id="nas-value" type="text" value={nasSecretValue} onChange={(e) => setNasSecretValue(e.target.value)} placeholder="Secret for this NAS"/></div>
                         <Button onClick={addNasSecretEntry} size="sm"><PlusCircle className="h-4 w-4"/></Button>
                     </div>
                 </div>
               </fieldset>
+
+              <fieldset className="border p-4 rounded-md">
+                  <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
+                    <span>Connection Test Sequence (Simulated)</span>
+                    <Button variant="outline" size="sm" onClick={addCustomTestStep} className="ml-auto">
+                        <PlusCircle className="mr-2 h-4 w-4" /> Add Custom Step
+                    </Button>
+                  </legend>
+                  <div className="space-y-3 mt-3">
+                    {editingConfig.testSteps.map((step, index) => (
+                        <Card key={step.id} className="p-3 bg-muted/50 relative group dark:bg-muted/20">
+                             <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 flex-grow">
+                                     <Settings className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                                    <Input 
+                                        value={step.name} 
+                                        onChange={(e) => handleTestStepChange(index, 'name', e.target.value)} 
+                                        className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
+                                        placeholder="Step Name"
+                                    />
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                     {step.isMandatory && <Badge variant="secondary" className="text-xs whitespace-nowrap">Mandatory</Badge>}
+                                    <Switch 
+                                        id={`step-enabled-${index}`}
+                                        checked={step.isEnabled} 
+                                        onCheckedChange={(checked) => handleTestStepChange(index, 'isEnabled', checked)}
+                                        disabled={step.isMandatory}
+                                        aria-label="Enable step"
+                                    />
+                                    {!step.isMandatory && (
+                                        <Button variant="ghost" size="icon" onClick={() => removeTestStep(index)} className="text-destructive hover:text-destructive h-7 w-7">
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                            <div>
+                                <Label htmlFor={`step-cmd-${index}`} className="text-xs text-muted-foreground">Simulated Command</Label>
+                                <Textarea 
+                                    id={`step-cmd-${index}`}
+                                    value={step.command} 
+                                    onChange={(e) => handleTestStepChange(index, 'command', e.target.value)} 
+                                    rows={2} 
+                                    className="font-mono text-xs mt-1"
+                                    placeholder="e.g., which radclient or ./my_custom_check.sh"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Placeholders: `${"${host}"}`, `${"${sshUser}"}`, `${"${sshPort}"}`, `${"${serverType}"}`.
+                                </p>
+                            </div>
+                        </Card>
+                    ))}
+                  </div>
+              </fieldset>
+
             </div>
             </ScrollArea>
           )}
@@ -395,17 +521,19 @@ export default function ServerConfigPage() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">Overall Status:</span>
-                  {testConnectionResult.overallStatus === 'success' && <Badge className="bg-green-500 hover:bg-green-600">Success</Badge>}
+                  {testConnectionResult.overallStatus === 'success' && <Badge className="bg-green-500 hover:bg-green-600 text-primary-foreground">Success</Badge>}
                   {testConnectionResult.overallStatus === 'failure' && <Badge variant="destructive">Failure</Badge>}
-                  {testConnectionResult.overallStatus === 'partial' && <Badge variant="secondary" className="bg-yellow-500 hover:bg-yellow-600">Partial Success</Badge>}
+                  {testConnectionResult.overallStatus === 'partial' && <Badge variant="secondary" className="bg-yellow-500 hover:bg-yellow-600 text-secondary-foreground">Partial Success</Badge>}
+                   {testConnectionResult.overallStatus === 'testing' && <Badge variant="outline" className="text-blue-600 border-blue-400 dark:text-blue-400 dark:border-blue-500"><Loader2 className="mr-1 h-3 w-3 animate-spin" />Testing...</Badge>}
                 </div>
                 {testConnectionResult.steps.map((step, index) => (
                   <Card key={index} className="overflow-hidden">
                     <CardHeader className={cn("p-3 flex flex-row items-center justify-between",
-                      step.status === 'success' && 'bg-green-500/10',
-                      step.status === 'failure' && 'bg-red-500/10',
-                      step.status === 'skipped' && 'bg-gray-500/10',
-                      step.status === 'running' && 'bg-blue-500/10 animate-pulse'
+                      step.status === 'success' && 'bg-green-500/10 dark:bg-green-600/20',
+                      step.status === 'failure' && 'bg-red-500/10 dark:bg-red-600/20',
+                      step.status === 'skipped' && 'bg-gray-500/10 dark:bg-gray-600/20',
+                      step.status === 'running' && 'bg-blue-500/10 dark:bg-blue-600/20 animate-pulse',
+                      step.status === 'pending' && 'bg-muted/50 dark:bg-muted/20'
                     )}>
                       <div className="flex items-center gap-2">
                         {step.status === 'success' && <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />}
@@ -420,16 +548,16 @@ export default function ServerConfigPage() {
                         step.status === 'failure' ? 'destructive' :
                         'outline'
                       } className={cn(
-                        step.status === 'success' && 'bg-green-600 text-white',
-                        step.status === 'failure' && 'bg-red-600 text-white',
-                        step.status === 'skipped' && 'bg-gray-600 text-white'
+                        step.status === 'success' && 'bg-green-600 text-white dark:bg-green-500 dark:text-primary-foreground',
+                        step.status === 'failure' && 'bg-red-600 text-white dark:bg-red-500 dark:text-destructive-foreground',
+                        step.status === 'skipped' && 'bg-gray-600 text-white dark:bg-gray-500 dark:text-primary-foreground'
                       )}>{step.status}</Badge>
                     </CardHeader>
                     {(step.output || step.error || step.command) && (
-                        <CardContent className="p-3 text-xs bg-muted/30">
-                            {step.command && <p className="text-muted-foreground font-mono mb-1">Simulated command: <code className="text-foreground bg-background/50 px-1 rounded">{step.command}</code></p>}
-                            {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
-                            {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 dark:text-red-400 bg-red-500/10 p-2 rounded mt-1 max-h-40 overflow-y-auto">Error: {step.error}</pre>}
+                        <CardContent className="p-3 text-xs bg-muted/30 dark:bg-muted/10">
+                            {step.command && <p className="text-muted-foreground font-mono mb-1">Simulated command: <code className="text-foreground bg-background/50 px-1 rounded dark:bg-background/20">{step.command}</code></p>}
+                            {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto dark:bg-background/20">{step.output}</pre>}
+                            {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 dark:text-red-400 bg-red-500/10 p-2 rounded mt-1 max-h-40 overflow-y-auto dark:bg-red-600/20">{step.error}</pre>}
                         </CardContent>
                     )}
                   </Card>
@@ -446,4 +574,3 @@ export default function ServerConfigPage() {
     </div>
   );
 }
-
