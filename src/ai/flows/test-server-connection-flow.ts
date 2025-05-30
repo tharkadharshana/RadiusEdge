@@ -54,8 +54,13 @@ const TestServerConnectionOutputSchema = z.object({
 export type TestServerConnectionOutput = z.infer<typeof TestServerConnectionOutputSchema>;
 
 // Simulate a delay
+// REAL_IMPLEMENTATION_NOTE: In a real system, actual command execution times will vary.
+// This delay is purely for making the simulation feel somewhat realistic.
 const simulateDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Interpolate command strings with server information
+// REAL_IMPLEMENTATION_NOTE: This helper can be useful for constructing actual commands
+// if your backend system uses templated commands.
 function interpolateCommand(command: string, serverInfo: Pick<TestServerConnectionInput, 'host' | 'sshUser' | 'sshPort' | 'serverType'>): string {
     let interpolated = command;
     interpolated = interpolated.replace(/\$\{host\}/g, serverInfo.host);
@@ -71,7 +76,14 @@ function interpolateCommand(command: string, serverInfo: Pick<TestServerConnecti
     return interpolated;
 }
 
-
+// Simulates the execution of a single test step.
+// REAL_IMPLEMENTATION_NOTE: This function would be replaced by actual SSH command execution logic.
+// It would involve:
+// 1. Establishing an SSH connection (if not already established for a sequence).
+// 2. Executing the `interpolatedCommand` on the remote server.
+// 3. Capturing the stdout, stderr, and exit code.
+// 4. Comparing stdout/stderr against `stepConfig.expectedOutputContains` if provided.
+// 5. Determining `isSuccess` based on exit code and expected output matching.
 async function simulateStepExecution(
     stepConfig: ClientTestStep,
     serverInfo: Pick<TestServerConnectionInput, 'id' | 'host' | 'sshPort' | 'sshUser' | 'authMethod' | 'privateKey' | 'password' | 'serverType'>
@@ -88,79 +100,83 @@ async function simulateStepExecution(
         };
     }
 
+    // REAL_IMPLEMENTATION_NOTE: Replace simulateDelay with actual command execution time.
     await simulateDelay(300 + Math.random() * 700); 
 
     const cmdLower = interpolatedCommand.toLowerCase();
-    let successRate = 0.85; 
-    let simulatedOutput = `Simulated output for command: ${interpolatedCommand}\n... processing ...`;
+    let successRate = 0.85; // General success rate for simulations
+    let simulatedOutput = `SIMULATED_OUTPUT: Executing command: ${interpolatedCommand}\n... processing ...`;
     let simulatedError;
     let isSuccess = false; // Default to false, prove success
 
-    // Determine success rate and output based on command
-    if (cmdLower.includes('ssh ')) {
-        successRate = 0.9;
+    // REAL_IMPLEMENTATION_NOTE: The following conditional logic is purely for generating
+    // plausible mock outputs for common commands. In a real system, you'd get actual output.
+    if (cmdLower.includes('ssh ')) { // Simulating SSH connection itself
+        successRate = 0.9; // Higher success for direct SSH test
         if (Math.random() < successRate) {
-            simulatedOutput = `Successfully connected to ${serverInfo.host}:${serverInfo.sshPort} as ${serverInfo.sshUser}.\nSSH Connected`;
+            simulatedOutput = `SIMULATED_OUTPUT: Successfully connected to ${serverInfo.host}:${serverInfo.sshPort} as ${serverInfo.sshUser}.\nSSH Connected`;
         } else {
-            simulatedOutput = `Failed to connect to ${serverInfo.host}:${serverInfo.sshPort}. Check credentials or network.`;
+            simulatedOutput = `SIMULATED_OUTPUT: Failed to connect to ${serverInfo.host}:${serverInfo.sshPort}. Check credentials or network.`;
             simulatedError = 'Simulated SSH connection failure.';
         }
     } else if (cmdLower.includes('which radclient')) {
         successRate = 0.95;
         if (Math.random() < successRate) {
-            simulatedOutput = '/usr/bin/radclient';
+            simulatedOutput = 'SIMULATED_OUTPUT: /usr/bin/radclient';
         } else {
-            simulatedOutput = 'radclient: not found';
+            simulatedOutput = 'SIMULATED_OUTPUT: radclient: not found';
             simulatedError = 'Simulated: radclient not found.';
         }
     } else if (cmdLower.includes('which radtest')) {
         successRate = 0.9;
          if (Math.random() < successRate) {
-            simulatedOutput = '/usr/bin/radtest';
+            simulatedOutput = 'SIMULATED_OUTPUT: /usr/bin/radtest';
         } else {
-            simulatedOutput = 'radtest: not found';
+            simulatedOutput = 'SIMULATED_OUTPUT: radtest: not found';
             simulatedError = 'Simulated: radtest not found.';
         }
-    } else if (cmdLower.includes('-xc')) { // Config validation
+    } else if (cmdLower.includes('-xc')) { // Simulating RADIUS config validation
         successRate = 0.85;
         const radiusdBinary = serverInfo.serverType === 'freeradius' ? 'freeradius' : 'radiusd';
         const configDir = serverInfo.serverType === 'freeradius' ? '/etc/freeradius/3.0' : '/etc/raddb';
         if (Math.random() < successRate) {
-            simulatedOutput = `${radiusdBinary}: Configuration appears to be OK. Ready to start.`;
+            simulatedOutput = `SIMULATED_OUTPUT: ${radiusdBinary}: Configuration appears to be OK. Ready to start.`;
         } else {
-            simulatedOutput = `${radiusdBinary}: Checking configuration files...\nERROR: Invalid syntax in ${configDir}/sites-enabled/default\n...`;
+            simulatedOutput = `SIMULATED_OUTPUT: ${radiusdBinary}: Checking configuration files...\nERROR: Invalid syntax in ${configDir}/sites-enabled/default\n...`;
             simulatedError = 'Simulated RADIUS configuration errors.';
         }
-    } else if (cmdLower.includes('systemctl status') || cmdLower.includes('service status')) {
+    } else if (cmdLower.includes('systemctl status') || cmdLower.includes('service status')) { // Simulating service status check
         successRate = 0.9;
         const serviceName = interpolatedCommand.split(' ').pop() || (serverInfo.serverType === 'freeradius' ? 'freeradius' : 'radiusd');
         if (Math.random() < successRate) {
-            simulatedOutput = `● ${serviceName}.service - FreeRADIUS multi-protocol policy server\n   Loaded: loaded (/lib/systemd/system/${serviceName}.service; enabled; vendor preset: enabled)\n   Active: active (running) since Mon 2024-01-01 12:00:00 UTC; 1 day ago`;
+            simulatedOutput = `SIMULATED_OUTPUT: ● ${serviceName}.service - FreeRADIUS multi-protocol policy server\n   Loaded: loaded (/lib/systemd/system/${serviceName}.service; enabled; vendor preset: enabled)\n   Active: active (running) since Mon 2024-01-01 12:00:00 UTC; 1 day ago`;
         } else {
-            simulatedOutput = `● ${serviceName}.service - FreeRADIUS multi-protocol policy server\n   Loaded: loaded (/lib/systemd/system/${serviceName}.service; enabled; vendor preset: enabled)\n   Active: inactive (dead)`;
+            simulatedOutput = `SIMULATED_OUTPUT: ● ${serviceName}.service - FreeRADIUS multi-protocol policy server\n   Loaded: loaded (/lib/systemd/system/${serviceName}.service; enabled; vendor preset: enabled)\n   Active: inactive (dead)`;
             simulatedError = `Simulated: ${serviceName} service not running.`;
         }
     } else { // Custom command or other default command not specifically handled above
-        simulatedOutput = `Simulating custom command: ${interpolatedCommand}\nCustom script output example... Operation completed.`;
+        simulatedOutput = `SIMULATED_OUTPUT: Simulating custom command: ${interpolatedCommand}\nCustom script output example... Operation completed.`;
         if (Math.random() >= successRate) { // Generic random failure for unhandled/custom commands
             simulatedError = `Simulated error for custom command: ${interpolatedCommand}`;
-            simulatedOutput = `Simulated failure for custom command: ${interpolatedCommand}\nError: Something went wrong during execution.`;
+            simulatedOutput = `SIMULATED_OUTPUT: Simulated failure for custom command: ${interpolatedCommand}\nError: Something went wrong during execution.`;
         }
     }
     
     // Determine success based on expectedOutputContains if provided
+    // REAL_IMPLEMENTATION_NOTE: This logic for checking `expectedOutputContains`
+    // would apply to actual stdout/stderr.
     if (stepConfig.expectedOutputContains) {
         if (!simulatedError && simulatedOutput.includes(stepConfig.expectedOutputContains)) {
             isSuccess = true;
         } else {
-            isSuccess = false; // Remains false or set explicitly
-            if (!simulatedError) { // If no explicit error was simulated but expected output is missing
+            isSuccess = false; 
+            if (!simulatedError) { 
                  simulatedError = `Expected output substring "${stepConfig.expectedOutputContains}" not found in simulated output.`;
-                 simulatedOutput += `\n[VALIDATION] Expected output check failed.`;
+                 simulatedOutput += `\n[VALIDATION_MSG] Expected output check failed.`;
             }
         }
     } else { // Fallback to original logic if no expectedOutputContains is given
-        isSuccess = !simulatedError;
+        isSuccess = !simulatedError; // If a simulated error was set, it's not a success.
     }
 
     return {
@@ -172,7 +188,9 @@ async function simulateStepExecution(
     };
 }
 
-
+// Main exported function for testing server connection.
+// REAL_IMPLEMENTATION_NOTE: This function would likely orchestrate calls to a backend service
+// that handles the actual SSH connections and command executions based on `input.stepsToExecute`.
 export async function testServerConnection(input: TestServerConnectionInput): Promise<TestServerConnectionOutput> {
   const results: TestServerConnectionStepResult[] = [];
   let executionShouldHalt = false; 
@@ -183,7 +201,7 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
       results.push({
         stepName: stepConfig.name,
         status: 'skipped',
-        command: interpolateCommand(stepConfig.command, input), // Interpolate even for skipped for consistency in display
+        command: interpolateCommand(stepConfig.command, input), 
         output: 'Skipped due to previous critical failure.',
       });
       continue;
@@ -199,12 +217,13 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
         continue;
     }
     
+    // REAL_IMPLEMENTATION_NOTE: This is where the call to the actual SSH execution logic would happen.
     const stepResult = await simulateStepExecution(stepConfig, input);
     results.push(stepResult);
 
     if (stepResult.status === 'failure') {
-      // Check if this step was mandatory or if any failure should halt
-      // For now, any failure on an enabled step halts execution.
+      // REAL_IMPLEMENTATION_NOTE: Halting execution on first failure is a design choice.
+      // You might want to make this configurable or allow non-critical steps to fail without halting.
       executionShouldHalt = true; 
     }
   }
@@ -213,24 +232,19 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
   if (executionShouldHalt) {
     overallStatus = 'failure';
   } else {
-    // If execution didn't halt, check if any enabled steps were actually run
     const enabledStepConfigs = input.stepsToExecute.filter(s => s.isEnabled);
     if (enabledStepConfigs.length === 0) {
-      // No steps were enabled to run. Could be considered 'partial' or 'success' if that's desired.
-      // For now, let's say 'partial' to indicate nothing substantial was tested.
-      overallStatus = 'partial'; 
+      overallStatus = 'partial'; // No steps were enabled to run.
     } else {
-      // All enabled steps were attempted (none were skipped due to halt)
-      // and all of them must have succeeded (or were user-disabled and thus skipped, which is fine)
       const relevantResults = results.filter(r => {
           const originalStep = input.stepsToExecute.find(s => s.name === r.stepName);
-          return originalStep?.isEnabled; // Only consider results for steps that were enabled
+          return originalStep?.isEnabled;
       });
 
       if (relevantResults.length > 0 && relevantResults.every(r => r.status === 'success')) {
         overallStatus = 'success';
       } else {
-        // This case implies some enabled steps didn't succeed, or no enabled steps ran to completion.
+        // This implies some enabled steps didn't succeed, or no enabled steps ran to completion.
         // Given the halt logic, if we get here and it's not 'success', it's likely 'partial'
         // (e.g., all steps were disabled by user but no failures occurred).
         overallStatus = 'partial'; 
@@ -238,14 +252,13 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
     }
   }
 
-  // Final check if overallStatus is still 'testing' (e.g., no steps in input at all)
-  if (overallStatus === 'testing') {
+  if (overallStatus === 'testing') { // If still 'testing' (e.g., no steps in input or all disabled)
       if (input.stepsToExecute.length === 0) {
           overallStatus = 'partial'; // No steps to execute.
+      } else if (input.stepsToExecute.every(s => !s.isEnabled)) {
+          overallStatus = 'partial'; // All steps were disabled by user.
       } else {
-          // If all steps were disabled, it would already be 'partial'.
-          // This path might not be hit often with current logic.
-          overallStatus = 'partial'; // Default if not clearly success or failure
+          overallStatus = 'partial'; // Default if not clearly success or failure after processing
       }
   }
 
@@ -253,7 +266,8 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
 }
 
 
-// Internal flow definition - not exported
+// Internal flow definition - not exported. Genkit uses this for flow management.
+// The actual logic is in the `testServerConnection` async function above.
 const testServerConnectionInternalFlow = ai.defineFlow(
   {
     name: 'testServerConnectionInternalFlow', 
@@ -261,6 +275,9 @@ const testServerConnectionInternalFlow = ai.defineFlow(
     outputSchema: TestServerConnectionOutputSchema,
   },
   async (input) => {
+    // This internal flow directly calls the exported async function.
+    // This is where, in a real backend, you might make an RPC or HTTP call
+    // to a service that can perform the SSH operations.
     return testServerConnection(input);
   }
 );
