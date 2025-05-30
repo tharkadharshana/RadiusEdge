@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ListTree, FilePenLine, Bot, TerminalSquare, Rocket, Activity, CheckCircle, AlertTriangle, BarChart3, Settings, PlusCircle, PlayCircle, Server, Loader2 } from 'lucide-react';
+import { FilePenLine, Bot, BarChart3, Settings, PlusCircle, PlayCircle, Server, Loader2, Rocket, Activity, CheckCircle, AlertTriangle, Waypoints } from 'lucide-react'; // Added Waypoints
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Scenario } from '@/app/scenarios/page'; // Assuming Scenario type is exported
