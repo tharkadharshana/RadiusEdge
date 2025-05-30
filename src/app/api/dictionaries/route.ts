@@ -4,20 +4,31 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
 import type { Dictionary, Attribute } from '@/app/dictionaries/page'; 
 import { v4 as uuidv4 } from 'uuid';
+import { parseDictionaryFileContent } from '@/ai/flows/parse-dictionary-file-content';
 
 // Helper to parse JSON safely
 const parseJsonField = (jsonString: string | null | undefined, defaultValue: any[] = []): Attribute[] => {
-  if (!jsonString) return defaultValue;
+  if (jsonString === null || jsonString === undefined) {
+    // console.warn('JSON string for attributes was null or undefined, returning default.');
+    return defaultValue;
+  }
+  if (typeof jsonString !== 'string') {
+    // console.warn('Attempted to parse non-string as JSON for attributes, returning default. Value:', jsonString);
+    return defaultValue;
+  }
+  if (jsonString.trim() === '') {
+    // console.warn('JSON string for attributes was empty, returning default.');
+    return defaultValue;
+  }
   try {
     const parsed = JSON.parse(jsonString);
-    // Add basic validation for attribute structure if needed
     if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
       return parsed as Attribute[];
     }
     // console.warn('Parsed JSON field for attributes was not an array of valid Attribute objects:', parsed);
     return defaultValue;
   } catch (e) {
-    console.error('Failed to parse JSON field for dictionary attributes:', e);
+    console.error('Failed to parse JSON field for dictionary attributes:', e, 'Input string:', jsonString.substring(0,100)); // Log part of the string
     return defaultValue;
   }
 };
@@ -34,15 +45,14 @@ export async function GET() {
       let validLastUpdated: string;
       if (d.lastUpdated) {
         const dateObj = new Date(d.lastUpdated as string);
-        // Check if date is valid
         if (!isNaN(dateObj.getTime())) {
           validLastUpdated = dateObj.toISOString();
         } else {
-          console.warn(`Invalid date string for dictionary ID ${d.id}: ${d.lastUpdated}. Defaulting lastUpdated.`);
-          validLastUpdated = new Date(0).toISOString(); // Default to epoch if invalid
+          // console.warn(`Invalid date string for dictionary ID ${d.id}: ${d.lastUpdated}. Defaulting lastUpdated.`);
+          validLastUpdated = new Date(0).toISOString(); 
         }
       } else {
-        validLastUpdated = new Date(0).toISOString(); // Default to epoch if null/undefined
+        validLastUpdated = new Date(0).toISOString(); 
       }
 
       return {
@@ -66,24 +76,65 @@ export async function GET() {
 }
 
 // POST a new dictionary metadata entry (conceptual "import")
+interface PostRequestBody {
+  name?: string;
+  source?: string;
+  rawContent?: string;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as Partial<Pick<Dictionary, 'name' | 'source'>>;
+    const body = await request.json() as PostRequestBody;
 
-    if (!body.name || !body.source) {
-      return NextResponse.json({ message: 'Dictionary name and source are required' }, { status: 400 });
+    let dictName = body.name;
+    let dictSource = body.source;
+    let exampleAttributes: Attribute[] = [];
+    let vendorInfo: { vendorName?: string; vendorId?: string } = {};
+
+    if (body.rawContent) {
+      try {
+        const parsedResult = await parseDictionaryFileContent({ dictionaryContent: body.rawContent });
+        if (parsedResult.attributes) {
+          exampleAttributes = parsedResult.attributes.map(attr => ({
+            id: attr.id || uuidv4(), 
+            name: attr.name,
+            code: attr.code,
+            type: attr.type,
+            vendor: parsedResult.vendorName || attr.vendor || 'Unknown',
+            description: attr.description || '',
+            enumValues: attr.enumValues || [],
+            examples: attr.examples || '',
+          }));
+        }
+        vendorInfo = { vendorName: parsedResult.vendorName, vendorId: parsedResult.vendorId };
+        
+        if (!dictName && parsedResult.vendorName) {
+          dictName = parsedResult.vendorName;
+        }
+        if (!dictSource && parsedResult.vendorName) {
+          dictSource = parsedResult.vendorName;
+        }
+      } catch (parseError) {
+        console.warn("AI parsing of dictionary content failed during POST:", parseError);
+      }
     }
+    
+    if (!dictName) {
+      return NextResponse.json({ message: 'Dictionary name is required (either provided directly or parsable from content)' }, { status: 400 });
+    }
+    dictSource = dictSource || "Manually Created / Parsed";
+
 
     const db = await getDb();
-    const id = body.name.toLowerCase().replace(/[^a-z0-9]/gi, '_') + '_' + uuidv4().substring(0,4);
+    const id = dictName.toLowerCase().replace(/[^a-z0-9_]/gi, '_').substring(0,50) + '_' + uuidv4().substring(0,8);
     
     const newDictionaryMetadata = {
       id,
-      name: body.name,
-      source: body.source,
+      name: dictName,
+      source: dictSource,
       isActive: true, 
       lastUpdated: new Date().toISOString(),
-      exampleAttributes: JSON.stringify([]), // Initialize with empty array string
+      exampleAttributes: JSON.stringify(exampleAttributes), 
     };
 
     await db.run(
@@ -102,11 +153,10 @@ export async function POST(request: NextRequest) {
       source: newDictionaryMetadata.source,
       isActive: newDictionaryMetadata.isActive,
       lastUpdated: newDictionaryMetadata.lastUpdated,
-      exampleAttributes: [], // Return as parsed array
-      attributes: 0, 
-      vendorCodes: 0, 
+      exampleAttributes: exampleAttributes,
+      attributes: exampleAttributes.length, 
+      vendorCodes: vendorInfo.vendorId ? 1 : 0, 
     };
-
 
     return NextResponse.json(returnData, { status: 201 });
   } catch (error) {
@@ -115,4 +165,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Failed to create dictionary metadata', error: errorMessage }, { status: 500 });
   }
 }
-    
