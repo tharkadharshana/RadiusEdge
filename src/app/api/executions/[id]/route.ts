@@ -81,17 +81,15 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
   try {
     // For proper cleanup, associated logs should also be deleted.
     // This can be handled by database foreign key constraints with ON DELETE CASCADE,
-    // or by explicit DELETE statements here. For simplicity, we'll only delete the execution record.
-    // In a production system, ensure logs are cleaned up.
-    // await db.run('DELETE FROM execution_logs WHERE testExecutionId = ?', params.id);
-
+    // or by explicit DELETE statements here.
+    await db.run('DELETE FROM execution_logs WHERE testExecutionId = ?', params.id);
     const result = await db.run('DELETE FROM test_executions WHERE id = ?', params.id);
 
     if (result.changes === 0) {
       return NextResponse.json({ message: 'Test execution not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ message: 'Test execution deleted successfully. Associated logs may need manual cleanup or cascading delete setup.' });
+    return NextResponse.json({ message: 'Test execution and associated logs deleted successfully.' });
   } catch (error) {
     console.error(`Failed to delete test execution ${params.id}:`, error);
     return NextResponse.json({ message: `Failed to delete test execution ${params.id}`, error: (error as Error).message }, { status: 500 });
