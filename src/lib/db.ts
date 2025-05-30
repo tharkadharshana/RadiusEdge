@@ -136,6 +136,38 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Test Results table checked/created.');
 
+  // Test Executions Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS test_executions (
+      id TEXT PRIMARY KEY,
+      scenarioId TEXT, 
+      scenarioName TEXT NOT NULL,
+      serverId TEXT,
+      serverName TEXT NOT NULL,
+      startTime TEXT NOT NULL,    -- ISO8601 string
+      endTime TEXT,             -- ISO8601 string, nullable
+      status TEXT NOT NULL,       -- 'Running', 'Completed', 'Failed', 'Aborted'
+      resultId TEXT             -- Nullable, could link to test_results.id
+      -- FOREIGN KEY (scenarioId) REFERENCES scenarios(id), -- Consider adding if strict FKs are desired
+      -- FOREIGN KEY (serverId) REFERENCES server_configs(id)
+    );
+  `);
+  console.log('Test Executions table checked/created.');
+
+  // Execution Logs Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS execution_logs (
+      id TEXT PRIMARY KEY,
+      testExecutionId TEXT NOT NULL,
+      timestamp TEXT NOT NULL,    -- ISO8601 string
+      level TEXT NOT NULL,        -- 'INFO', 'ERROR', 'SSH_CMD', etc.
+      message TEXT NOT NULL,
+      rawDetails TEXT             -- JSON string for raw packets, command output, etc.
+      -- FOREIGN KEY (testExecutionId) REFERENCES test_executions(id) -- Consider adding
+    );
+  `);
+  console.log('Execution Logs table checked/created.');
+
   console.log('Database schema initialization complete.');
 }
 
@@ -144,4 +176,3 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
 if (process.env.NODE_ENV !== 'production') {
   getDb().catch(err => console.error("Failed to initialize DB on module load:", err));
 }
-
