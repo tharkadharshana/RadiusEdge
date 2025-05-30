@@ -110,14 +110,15 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Users table checked/created.');
 
-  // Dictionaries Table (for metadata)
+  // Dictionaries Table (for metadata and example attributes)
   await db.exec(`
     CREATE TABLE IF NOT EXISTS dictionaries (
       id TEXT PRIMARY KEY,    -- e.g., 'std', '3gpp', 'custom-acme_corp'
       name TEXT NOT NULL,     -- e.g., 'Standard RADIUS', '3GPP VSAs', 'ACME Corp Custom'
       source TEXT,            -- e.g., 'Standard', '3GPP', 'Custom Upload'
       isActive BOOLEAN DEFAULT TRUE,
-      lastUpdated TEXT        -- Store as ISO8601 string
+      lastUpdated TEXT,       -- Store as ISO8601 string
+      exampleAttributes TEXT  -- Store as JSON string of example Attribute objects
     );
   `);
   console.log('Dictionaries table checked/created.');

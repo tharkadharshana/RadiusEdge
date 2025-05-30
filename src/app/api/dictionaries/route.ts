@@ -5,17 +5,31 @@ import { getDb } from '@/lib/db';
 import type { Dictionary } from '@/app/dictionaries/page'; // Assuming Dictionary type is exported
 import { v4 as uuidv4 } from 'uuid';
 
+// Helper to parse JSON safely
+const parseJsonField = (jsonString: string | null | undefined, defaultValue: any[] = []) => {
+  if (!jsonString) return defaultValue;
+  try {
+    const parsed = JSON.parse(jsonString);
+    return Array.isArray(parsed) ? parsed : defaultValue;
+  } catch (e) {
+    console.error('Failed to parse JSON field for dictionary attributes:', e);
+    return defaultValue;
+  }
+};
+
+
 // GET all dictionary metadata
 export async function GET() {
   try {
     const db = await getDb();
-    const dictionariesFromDb = await db.all('SELECT id, name, source, isActive, lastUpdated FROM dictionaries ORDER BY name ASC');
+    const dictionariesFromDb = await db.all('SELECT id, name, source, isActive, lastUpdated, exampleAttributes FROM dictionaries ORDER BY name ASC');
     
     const dictionaries: Dictionary[] = dictionariesFromDb.map(d => ({
       ...d,
       isActive: Boolean(d.isActive), // Ensure boolean
+      exampleAttributes: parseJsonField(d.exampleAttributes),
       // Mock attributesCount and vendorCodesCount as these are not stored in this simplified backend
-      attributes: 0, // Placeholder
+      attributes: (parseJsonField(d.exampleAttributes)).length, // Count example attributes
       vendorCodes: 0, // Placeholder
     })) as unknown as Dictionary[]; // Cast needed due to placeholder counts
 
@@ -36,7 +50,6 @@ export async function POST(request: NextRequest) {
     }
 
     const db = await getDb();
-    // Generate an ID, e.g., from name or UUID
     const id = body.name.toLowerCase().replace(/[^a-z0-9]/gi, '_') + '_' + uuidv4().substring(0,4);
     
     const newDictionaryMetadata = {
@@ -45,20 +58,23 @@ export async function POST(request: NextRequest) {
       source: body.source,
       isActive: true, // Default to active
       lastUpdated: new Date().toISOString(),
+      exampleAttributes: JSON.stringify([]), // Initialize with empty array for example attributes
     };
 
     await db.run(
-      'INSERT INTO dictionaries (id, name, source, isActive, lastUpdated) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO dictionaries (id, name, source, isActive, lastUpdated, exampleAttributes) VALUES (?, ?, ?, ?, ?, ?)',
       newDictionaryMetadata.id,
       newDictionaryMetadata.name,
       newDictionaryMetadata.source,
       newDictionaryMetadata.isActive,
-      newDictionaryMetadata.lastUpdated
+      newDictionaryMetadata.lastUpdated,
+      newDictionaryMetadata.exampleAttributes
     );
 
     // Return the created metadata, plus placeholders for counts
     const returnData: Dictionary = {
       ...newDictionaryMetadata,
+      exampleAttributes: [],
       attributes: 0, // Placeholder
       vendorCodes: 0, // Placeholder
     } as unknown as Dictionary;
