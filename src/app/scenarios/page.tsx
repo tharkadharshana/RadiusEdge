@@ -35,21 +35,21 @@ import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
 
 
-type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end' | 'api_call' | 'log_message';
+export type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end' | 'api_call' | 'log_message';
 
-interface ExpectedReplyAttribute {
+export interface ExpectedReplyAttribute {
   id: string;
   name: string;
   value: string;
 }
 
-interface ApiHeader {
+export interface ApiHeader {
   id: string;
   name: string;
   value: string;
 }
 
-interface ScenarioStep {
+export interface ScenarioStep {
   id: string;
   type: ScenarioStepType;
   name: string;
@@ -71,17 +71,20 @@ interface ScenarioStep {
     // Conditional / Loop condition
     condition?: string;
     // API Call
+    // REAL_IMPLEMENTATION_NOTE: For API calls, a live system would make actual HTTP requests.
+    // The `mockResponseBody` is for simulation in this prototype.
+    // A real system would capture the actual response for validation or data extraction.
     url?: string;
     method?: 'GET' | 'POST';
     headers?: ApiHeader[];
     requestBody?: string;
-    mockResponseBody?: string;
+    mockResponseBody?: string; // For simulation
     // Log Message
     message?: string;
   };
 }
 
-interface ScenarioVariable {
+export interface ScenarioVariable {
   id: string;
   name: string;
   type: 'static' | 'random_string' | 'random_number' | 'list';
@@ -145,27 +148,45 @@ export default function ScenariosPage() {
       if (currentSearchTerm) {
         queryParams.append('search', currentSearchTerm);
       }
-      // queryParams.append('sortBy', 'lastModified'); // Example: could add a sort state
+      queryParams.append('sortBy', 'lastModified'); 
 
       const response = await fetch(`/api/scenarios?${queryParams.toString()}`);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: 'Failed to fetch scenarios' }));
-        throw new Error(errorData.message);
+        let apiError = 'Failed to fetch scenarios';
+        try {
+            const errorData = await response.json();
+            apiError = errorData.error || errorData.message || apiError;
+            console.error("FRONTEND: API error data for fetchScenarios:", errorData);
+        } catch (e) {
+            const textError = await response.text().catch(() => "Could not get error text from response.");
+            console.error("FRONTEND: Non-JSON API error for fetchScenarios:", textError);
+            apiError += `. Response: ${textError.substring(0, 150)}`;
+        }
+        throw new Error(apiError);
       }
-      const data = await response.json();
-      setScenarios(data);
+      const data: Scenario[] = await response.json();
+      setScenarios(data.map(s => ({
+        ...s,
+        variables: Array.isArray(s.variables) ? s.variables : [],
+        steps: Array.isArray(s.steps) ? s.steps.map(step => ({
+          ...step,
+          details: step.details || {},
+          expectedAttributes: Array.isArray(step.details?.expectedAttributes) ? step.details.expectedAttributes : [],
+          headers: Array.isArray(step.details?.headers) ? step.details.headers : [],
+        })) : [],
+        tags: Array.isArray(s.tags) ? s.tags : [],
+      })));
     } catch (error) {
-      console.error("Error fetching scenarios:", error);
-      toast({ title: "Error", description: (error as Error).message || "Could not fetch scenarios.", variant: "destructive" });
-      setScenarios([]); // Clear scenarios on error
+      console.error("FRONTEND: Error in fetchScenarios (catch block):", error);
+      toast({ title: "Error Fetching Scenarios", description: (error as Error).message, variant: "destructive" });
+      setScenarios([]); 
     } finally {
       setIsLoading(false);
     }
-  }, [toast]); // Removed setIsLoading from dependencies as it's stable
+  }, [toast]);
 
 
-  // Debounced version of fetchScenarios
-  const debouncedFetchScenarios = useCallback(debounce(fetchScenarios, 500), [fetchScenarios]);
+  const debouncedFetchScenarios = useCallback(debounce(fetchScenarios, 300), [fetchScenarios]);
 
   useEffect(() => {
     debouncedFetchScenarios(searchTerm);
@@ -182,15 +203,13 @@ export default function ScenariosPage() {
             handleEditScenario(scenarioToOpen);
         }
     } else if (templateId && scenarios.length === 0 && !isLoading) { 
-        // scenarios.length === 0 check might be problematic if fetch is ongoing
-        // Consider if template logic should wait for initial fetch
         const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' :
                            templateId === 'wifi-eap' ? 'Wi-Fi EAP-TTLS (from template)' :
                            'New Scenario (from template)';
       createNewScenario(templateName);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, scenarios, isLoading]); // Added scenarios and isLoading to deps
+  }, [searchParams, scenarios, isLoading]); 
 
 
   const handleEditScenario = (scenario: Scenario | null) => {
@@ -209,43 +228,43 @@ export default function ScenariosPage() {
       const response = await fetch(url, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
-        // Ensure lastModified is updated before saving
         body: JSON.stringify({ ...editingScenario, lastModified: new Date().toISOString() }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({message: "Failed to save scenario"}));
         throw new Error(errorData.message || `Failed to ${isNew ? 'create' : 'update'} scenario`);
       }
       const savedScenario = await response.json();
 
-      fetchScenarios(searchTerm); // Refetch to get the latest list including the saved one
+      fetchScenarios(searchTerm); 
       handleEditScenario(null);
       toast({ title: "Scenario Saved", description: `Scenario "${savedScenario.name}" has been saved.` });
     } catch (error: any) {
-      console.error(`Error saving scenario:`, error);
-      toast({ title: "Save Failed", description: error.message || "Could not save scenario.", variant: "destructive" });
+      console.error(`FRONTEND: Error saving scenario:`, error);
+      toast({ title: "Save Failed", description: error.message, variant: "destructive" });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDeleteScenario = async (scenarioId: string) => {
+    // REAL_IMPLEMENTATION_NOTE: This uses window.confirm. For more robust UI, replace with a custom AlertDialog.
     if (!window.confirm("Are you sure you want to delete this scenario?")) {
       return;
     }
-    setIsSaving(true); // Use isSaving to disable actions during delete
+    setIsSaving(true); 
     try {
       const response = await fetch(`/api/scenarios/${scenarioId}`, { method: 'DELETE' });
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to delete scenario');
+        const errorData = await response.json().catch(()=>({message: "Failed to delete scenario"}));
+        throw new Error(errorData.message);
       }
-      fetchScenarios(searchTerm); // Refetch scenarios after deletion
+      fetchScenarios(searchTerm); 
       toast({ title: "Scenario Deleted", description: "Scenario successfully deleted." });
     } catch (error: any) {
-      console.error("Error deleting scenario:", error);
-      toast({ title: "Delete Failed", description: error.message || "Could not delete scenario.", variant: "destructive" });
+      console.error("FRONTEND: Error deleting scenario:", error);
+      toast({ title: "Delete Failed", description: error.message, variant: "destructive" });
     } finally {
       setIsSaving(false);
     }
@@ -297,6 +316,8 @@ export default function ScenariosPage() {
         stepName = 'New RADIUS Request';
         stepDetails = { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 };
       } else if (type === 'sql') {
+        // REAL_IMPLEMENTATION_NOTE: SQL steps require a backend execution engine.
+        // The UI here is for defining the step.
         stepName = 'New SQL Validation';
         stepDetails = { query: '', expect_column: '', expect_value: '', connection: '' };
       } else if (type === 'delay') {
@@ -313,6 +334,7 @@ export default function ScenariosPage() {
       } else if (type === 'conditional_end') {
         stepName = 'Conditional End';
       } else if (type === 'api_call') {
+        // REAL_IMPLEMENTATION_NOTE: API calls are simulated.
         stepName = 'New API Call';
         stepDetails = { url: '', method: 'GET', headers: [{id: `header_${Date.now()}`, name: 'Content-Type', value: 'application/json'}], requestBody: '', mockResponseBody: '{ "success": true }' };
       } else if (type === 'log_message') {
@@ -454,8 +476,8 @@ export default function ScenariosPage() {
         toast({ title: "Attributes Parsed", description: `${newExpectedAttributes.length} attributes added/updated.` });
       }
     } catch (error) {
-      console.error("Error parsing attributes:", error);
-      toast({ title: "Parsing Failed", description: "Could not parse attributes from text. Please check the format.", variant: "destructive" });
+      console.error("FRONTEND: Error parsing attributes:", error);
+      toast({ title: "Parsing Failed", description: (error as Error).message || "Could not parse attributes from text.", variant: "destructive" });
     } finally {
       setIsParsingAttributes(false);
     }
@@ -497,23 +519,22 @@ export default function ScenariosPage() {
         if (typeof importedData.name !== 'string' || !Array.isArray(importedData.steps)) {
           throw new Error("Invalid scenario file format. Missing 'name' or 'steps'.");
         }
+        
+        // Ensure IDs are unique for imported items to prevent key conflicts if importing multiple times
+        const ensureUniqueIds = (items: any[], prefix: string) => 
+          items.map(item => ({ ...item, id: `${prefix}_imported_${Date.now()}_${Math.random().toString(36).substring(2,9)}` }));
 
         const scenarioToEdit: Scenario = {
           id: `imported-${Date.now()}`,
           name: importedData.name || "Imported Scenario",
           description: importedData.description || "",
-          variables: Array.isArray(importedData.variables) ? importedData.variables.map((v: any) => ({
-            id: v.id || `var${Date.now()}${Math.random()}`, ...v
-          })) : [],
-          steps: Array.isArray(importedData.steps) ? importedData.steps.map((s: any) => ({
-            id: s.id || `step${Date.now()}${Math.random()}`, ...s,
+          variables: Array.isArray(importedData.variables) ? ensureUniqueIds(importedData.variables, 'var') : [],
+          steps: Array.isArray(importedData.steps) ? importedData.steps.map((s: any) => ({ 
+            ...s, 
+            id: `step_imported_${Date.now()}_${Math.random().toString(36).substring(2,9)}`,
             details: s.details || {},
-            expectedAttributes: Array.isArray(s.details?.expectedAttributes) ? s.details.expectedAttributes.map((ea: any) => ({
-              id: ea.id || `exp_attr_${Date.now()}${Math.random()}`, ...ea
-            })) : [],
-            headers: Array.isArray(s.details?.headers) ? s.details.headers.map((h: any) => ({
-              id: h.id || `header_${Date.now()}${Math.random()}`, ...h
-            })) : [],
+            expectedAttributes: Array.isArray(s.details?.expectedAttributes) ? ensureUniqueIds(s.details.expectedAttributes, 'exp_attr') : [],
+            headers: Array.isArray(s.details?.headers) ? ensureUniqueIds(s.details.headers, 'header') : [],
           })) : [],
           lastModified: new Date().toISOString().split('T')[0],
           tags: Array.isArray(importedData.tags) ? importedData.tags : [],
@@ -523,7 +544,7 @@ export default function ScenariosPage() {
         toast({ title: "Scenario Imported", description: `Scenario "${scenarioToEdit.name}" loaded into editor. Please review and save.` });
 
       } catch (error: any) {
-        console.error("Error importing scenario:", error);
+        console.error("FRONTEND: Error importing scenario:", error);
         toast({ title: "Import Failed", description: error.message || "Could not parse scenario file.", variant: "destructive" });
       } finally {
         if (fileInputRef.current) {
@@ -539,7 +560,7 @@ export default function ScenariosPage() {
     <div className="space-y-8">
       <PageHeader
         title="Scenario Builder"
-        description="Design complex RADIUS test scenarios. Conditional logic and API calls are visual representations only. Step reordering (drag & drop) is not yet implemented."
+        description="Design RADIUS test scenarios. Conditional logic and API calls are currently simulated representations for this prototype. Drag & drop step reordering is not yet implemented."
         actions={
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept=".json" />
@@ -568,7 +589,7 @@ export default function ScenariosPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading && scenarios.length === 0 ? ( // Show loading only if scenarios are truly empty initially
+          {isLoading && scenarios.length === 0 ? ( 
             <div className="flex justify-center items-center h-40">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="ml-2 text-muted-foreground">Loading scenarios...</p>
@@ -647,7 +668,7 @@ export default function ScenariosPage() {
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' || editingScenario?.id.startsWith('imported-') ? 'Create/Edit Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-             Define scenario properties, variables, and steps. Conditional logic and API calls are visual representations only. Step reordering (drag & drop) is not yet implemented.
+             Define scenario properties, variables, and steps. Conditional logic and API calls are currently simulated representations for this prototype. Drag & drop step reordering is not yet implemented.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
@@ -734,7 +755,8 @@ export default function ScenariosPage() {
                       const StepIcon = stepIcons[step.type];
                       return (
                         <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
-                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented - visual cue only)" disabled={isSaving}>
+                           {/* REAL_IMPLEMENTATION_NOTE: The GripVertical icon is for visual representation of future drag-and-drop reordering. It is not functional yet. */}
+                           <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented)" disabled={isSaving}>
                             <GripVertical className="h-4 w-4" />
                           </Button>
                           <Button variant="ghost" size="icon" onClick={() => removeStep(index)} className="absolute top-2 right-2 text-destructive hover:text-destructive h-7 w-7 opacity-50 group-hover:opacity-100" disabled={isSaving}>
@@ -752,8 +774,9 @@ export default function ScenariosPage() {
                                 <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})} disabled={isSaving}>
                                   <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="pkt1">3GPP Access-Request</SelectItem>
-                                    <SelectItem value="pkt2">Cisco VoIP Acc Start</SelectItem>
+                                    {/* REAL_IMPLEMENTATION_NOTE: Packet selection should be populated from /api/packets */}
+                                    <SelectItem value="pkt1">3GPP Access-Request (Sample)</SelectItem>
+                                    <SelectItem value="pkt2">Cisco VoIP Acc Start (Sample)</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
@@ -772,7 +795,7 @@ export default function ScenariosPage() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => handleParsePastedAttributes(index)}
-                                  disabled={isSaving || isParsingAttributes}
+                                  disabled={isSaving || isParsingAttributes || !pastedAttributesText.trim()}
                                   className="w-full"
                                 >
                                   {isParsingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
@@ -820,9 +843,12 @@ export default function ScenariosPage() {
 
                           {step.type === 'sql' && (
                             <div className="space-y-2 pl-7 text-sm">
+                              {/* REAL_IMPLEMENTATION_NOTE: This step is for definition only. Actual SQL execution
+                                  would happen in a backend scenario execution engine.
+                                  The 'Connection' field would map to a DB config from /settings/database. */}
                               <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} disabled={isSaving}/>
                               <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} disabled={isSaving}/>
-                              <Label>DB Connection:</Label><Input placeholder="Default DB" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} disabled={isSaving}/>
+                              <Label>DB Connection:</Label><Input placeholder="Default DB (or ID from DB settings)" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} disabled={isSaving}/>
                             </div>
                           )}
                           {step.type === 'delay' && (
@@ -832,9 +858,11 @@ export default function ScenariosPage() {
                           )}
                           {(step.type === 'loop_start' || step.type === 'conditional_start') && (
                             <div className="space-y-2 pl-7 text-sm">
+                              {/* REAL_IMPLEMENTATION_NOTE: Loop and conditional logic are visual representations.
+                                  A backend execution engine would need to implement this logic. */}
                               {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} disabled={isSaving}/></div>}
-                              <Label>Condition:</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})} disabled={isSaving}/>
-                              {step.type === 'conditional_start' && <p className="text-xs text-muted-foreground">Note: Conditional execution is visual only.</p>}
+                              <Label>Condition (Descriptive):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})} disabled={isSaving}/>
+                              <p className="text-xs text-muted-foreground">Note: Conditional & loop execution logic is not implemented in this prototype.</p>
                             </div>
                           )}
                           {(step.type === 'loop_end' || step.type === 'conditional_end') && (
@@ -843,6 +871,8 @@ export default function ScenariosPage() {
 
                           {step.type === 'api_call' && (
                             <div className="space-y-3 pl-7 text-sm">
+                              {/* REAL_IMPLEMENTATION_NOTE: API calls are simulated. A backend engine
+                                  would make live HTTP requests. The mockResponseBody is for simulation. */}
                               <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })} disabled={isSaving}/></div>
                               <div>
                                 <Label>Method:</Label>
@@ -874,8 +904,8 @@ export default function ScenariosPage() {
                               {step.details.method === 'POST' && (
                                 <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={step.details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3} disabled={isSaving}/></div>
                               )}
-                              <div><Label>Mock Response Body (JSON for execution):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3} disabled={isSaving}/></div>
-                              <p className="text-xs text-muted-foreground">Note: API calls are for interaction with external systems.</p>
+                              <div><Label>Mock Response Body (JSON for simulation):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3} disabled={isSaving}/></div>
+                              <p className="text-xs text-muted-foreground">Note: API calls are simulated in this prototype.</p>
                             </div>
                           )}
 
@@ -911,3 +941,4 @@ export default function ScenariosPage() {
   );
 }
 
+// END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE

@@ -3,6 +3,8 @@
 'use server';
 /**
  * @fileOverview An AI agent that simulates testing a RADIUS server connection and setup based on a customizable sequence of steps.
+ * REAL_IMPLEMENTATION_NOTE: This entire flow is a SIMULATION. In a production system, this would be replaced by
+ * a backend service that establishes a real SSH connection to the target server and executes the defined commands.
  *
  * - testServerConnection - A function that simulates testing the server connection.
  * - TestServerConnectionInput - The input type for the testServerConnection function.
@@ -80,6 +82,8 @@ function interpolateCommand(command: string, serverInfo: Pick<TestServerConnecti
 // REAL_IMPLEMENTATION_NOTE: This function would be replaced by actual SSH command execution logic.
 // It would involve:
 // 1. Establishing an SSH connection (if not already established for a sequence).
+//    - Use a robust SSH library (e.g., 'ssh2' for Node.js).
+//    - Securely handle credentials (privateKey or password) - DO NOT hardcode. Consider environment variables or a secrets manager.
 // 2. Executing the `interpolatedCommand` on the remote server.
 // 3. Capturing the stdout, stderr, and exit code.
 // 4. Comparing stdout/stderr against `stepConfig.expectedOutputContains` if provided.
@@ -163,7 +167,7 @@ async function simulateStepExecution(
     }
     
     // Determine success based on expectedOutputContains if provided
-    // REAL_IMPLEMENTATION_NOTE: This logic for checking `expectedOutputContains`
+    // REAL_IMPLEMENTATION_NOTE: This logic for checking `stepConfig.expectedOutputContains`
     // would apply to actual stdout/stderr.
     if (stepConfig.expectedOutputContains) {
         if (!simulatedError && simulatedOutput.includes(stepConfig.expectedOutputContains)) {
@@ -191,6 +195,7 @@ async function simulateStepExecution(
 // Main exported function for testing server connection.
 // REAL_IMPLEMENTATION_NOTE: This function would likely orchestrate calls to a backend service
 // that handles the actual SSH connections and command executions based on `input.stepsToExecute`.
+// The backend service would need access to SSH libraries and a secure way to manage credentials.
 export async function testServerConnection(input: TestServerConnectionInput): Promise<TestServerConnectionOutput> {
   const results: TestServerConnectionStepResult[] = [];
   let executionShouldHalt = false; 
@@ -218,12 +223,14 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
     }
     
     // REAL_IMPLEMENTATION_NOTE: This is where the call to the actual SSH execution logic would happen.
+    // Example: const stepResult = await backendSshService.executeCommand(stepConfig, serverInfo);
     const stepResult = await simulateStepExecution(stepConfig, input);
     results.push(stepResult);
 
     if (stepResult.status === 'failure') {
       // REAL_IMPLEMENTATION_NOTE: Halting execution on first failure is a design choice.
       // You might want to make this configurable or allow non-critical steps to fail without halting.
+      // This 'isMandatory' check from client could be used here, but the current simulation halts on any failure.
       executionShouldHalt = true; 
     }
   }
@@ -236,6 +243,7 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
     if (enabledStepConfigs.length === 0) {
       overallStatus = 'partial'; // No steps were enabled to run.
     } else {
+      // Check if all *relevant* results (for enabled steps) were 'success'
       const relevantResults = results.filter(r => {
           const originalStep = input.stepsToExecute.find(s => s.name === r.stepName);
           return originalStep?.isEnabled;
@@ -244,20 +252,27 @@ export async function testServerConnection(input: TestServerConnectionInput): Pr
       if (relevantResults.length > 0 && relevantResults.every(r => r.status === 'success')) {
         overallStatus = 'success';
       } else {
-        // This implies some enabled steps didn't succeed, or no enabled steps ran to completion.
-        // Given the halt logic, if we get here and it's not 'success', it's likely 'partial'
-        // (e.g., all steps were disabled by user but no failures occurred).
-        overallStatus = 'partial'; 
+        // If we reached here and executionShouldHalt is false, it means either:
+        // - Some enabled steps were skipped for reasons other than failure (not currently possible in this simulation)
+        // - Or there were enabled steps, but not all of them were 'success' (implies 'failure' which should have set executionShouldHalt)
+        // This logic might need refinement if steps could be skipped for non-failure reasons.
+        // For now, if not 'failure' and not all enabled steps are 'success', treat as 'partial'.
+        // However, current logic ensures `executionShouldHalt` is true if any enabled step fails.
+        // So, if `executionShouldHalt` is false, it implies all enabled steps were successful or no enabled steps ran.
+        overallStatus = 'success'; // Simplified: if not failure, and some enabled steps ran, they must have succeeded.
       }
     }
   }
 
-  if (overallStatus === 'testing') { // If still 'testing' (e.g., no steps in input or all disabled)
+  // Final check if overallStatus is still 'testing' (e.g., no steps to execute or all disabled)
+  if (overallStatus === 'testing') { 
       if (input.stepsToExecute.length === 0) {
           overallStatus = 'partial'; // No steps to execute.
       } else if (input.stepsToExecute.every(s => !s.isEnabled)) {
           overallStatus = 'partial'; // All steps were disabled by user.
       } else {
+          // This case should ideally not be reached if there were enabled steps, as they would lead to 'success' or 'failure'.
+          // It implies no enabled steps led to a definitive outcome, which is unlikely with current logic.
           overallStatus = 'partial'; // Default if not clearly success or failure after processing
       }
   }
@@ -276,10 +291,11 @@ const testServerConnectionInternalFlow = ai.defineFlow(
   },
   async (input) => {
     // This internal flow directly calls the exported async function.
-    // This is where, in a real backend, you might make an RPC or HTTP call
+    // REAL_IMPLEMENTATION_NOTE: This is where, in a real backend, you might make an RPC or HTTP call
     // to a service that can perform the SSH operations.
     return testServerConnection(input);
   }
 );
 // Schemas are defined above but not exported from this file to comply with 'use server' requirements.
 // Only types (ClientTestStep, etc.) and the main async function 'testServerConnection' are exported.
+// END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
