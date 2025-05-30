@@ -17,7 +17,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
@@ -76,7 +75,7 @@ interface ScenarioStep {
     method?: 'GET' | 'POST';
     headers?: ApiHeader[];
     requestBody?: string;
-    mockResponseBody?: string; 
+    mockResponseBody?: string;
     // Log Message
     message?: string;
   };
@@ -89,7 +88,7 @@ interface ScenarioVariable {
   value: string;
 }
 
-interface Scenario {
+export interface Scenario { // Exporting for API usage
   id: string;
   name: string;
   description: string;
@@ -99,48 +98,12 @@ interface Scenario {
   tags: string[];
 }
 
-const initialScenarios: Scenario[] = [
-  {
-    id: 'scn1',
-    name: '3GPP Full Auth Flow',
-    description: 'A complete 3GPP authentication and accounting cycle.',
-    variables: [{id: 'var1', name: 'imsi', type: 'random_string', value: '3134600000000[0-9]{3}'}],
-    steps: [
-      { id: 's1', type: 'radius', name: 'Send Access-Request', details: { packet_id: '3gpp_auth_req', expectedAttributes: [{id: 'exp1_1', name: 'Framed-IP-Address', value: '192.168.1.100'}], timeout: 3000, retries: 2 } },
-      { id: 's1_cond_start', type: 'conditional_start', name: 'If Access-Accept Received', details: { condition: "RADIUS_Reply_Code == 'Access-Accept'"}},
-      { id: 's2', type: 'sql', name: 'Verify Session Status', details: { query: "SELECT status FROM sessions WHERE imsi = ${imsi}", expect_column: "status", expect_value: "active", connection: "prod_db" } },
-      { id: 's2_log', type: 'log_message', name: 'Log Success', details: { message: "IMSI ${imsi} session active in DB."}},
-      { id: 's1_cond_end', type: 'conditional_end', name: 'End If', details: {}},
-      { id: 's3', type: 'delay', name: 'Wait for Session Duration', details: { duration_ms: 60000 } },
-      { id: 's4', type: 'radius', name: 'Send Interim-Update', details: { packet_id: '3gpp_interim_acct', expectedAttributes: [], timeout: 3000, retries: 1 } },
-      { id: 's5_api', type: 'api_call', name: 'Notify External System', details: { url: 'https://my.api.example.com/notify', method: 'POST', requestBody: '{ "imsi": "${imsi}", "status": "interim_update_sent"}', headers: [{id: 'header1', name: 'Content-Type', value: 'application/json'}, {id:'header2', name: 'X-API-Key', value: 'mysecretkey'}], mockResponseBody: '{ "status": "received" }' }}
-    ],
-    lastModified: '2024-07-20',
-    tags: ['3GPP', 'E2E', 'Auth', 'Acct']
-  },
-  {
-    id: 'scn2',
-    name: 'WiFi EAP-TTLS Authentication',
-    description: 'Tests EAP-TTLS authentication for a WiFi hotspot.',
-    variables: [],
-    steps: [
-        { id: 's1_wifi', type: 'radius', name: 'EAP-Start', details: { packet_id: 'eap_start_req', expectedAttributes: [], timeout: 3000, retries: 2 } },
-        { id: 's2_wifi', type: 'loop_start', name: 'EAP Exchange Loop', details: { iterations: 5, condition: "response_contains_eap_challenge" } },
-        { id: 's3_wifi', type: 'radius', name: 'EAP-Response', details: { packet_id: 'eap_response_phase2', expectedAttributes: [], timeout: 3000, retries: 2 } },
-        { id: 's4_wifi', type: 'loop_end', name: 'End EAP Exchange', details: {} },
-        { id: 's5_wifi', type: 'radius', name: 'EAP-Success Check', details: { packet_id: '', expectedAttributes: [{id: 'exp2_1', name:'EAP-Type', value: 'Success'}], timeout: 5000, retries: 2 } },
-    ],
-    lastModified: '2024-07-18',
-    tags: ['WiFi', 'EAP', 'Auth']
-  },
-];
-
 const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   radius: FileText,
   sql: Database,
   delay: Clock,
   loop_start: Repeat,
-  loop_end: Repeat, 
+  loop_end: Repeat,
   conditional_start: GitBranch,
   conditional_end: GitBranch,
   api_call: Webhook,
@@ -149,48 +112,116 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
 
 export default function ScenariosPage() {
   const searchParams = useSearchParams();
-  const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [pastedAttributesText, setPastedAttributesText] = useState('');
   const [isParsingAttributes, setIsParsingAttributes] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const fetchScenarios = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/scenarios');
+      if (!response.ok) {
+        throw new Error('Failed to fetch scenarios');
+      }
+      const data = await response.json();
+      setScenarios(data);
+    } catch (error) {
+      console.error("Error fetching scenarios:", error);
+      toast({ title: "Error", description: "Could not fetch scenarios.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchScenarios();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
   useEffect(() => {
     const templateId = searchParams.get('template');
-    if (templateId) {
+    if (templateId && !isLoading) { // Ensure scenarios are loaded or not relevant to template
       const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' :
                            templateId === 'wifi-eap' ? 'Wi-Fi EAP-TTLS (from template)' :
                            'New Scenario (from template)';
       createNewScenario(templateName);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, isLoading]);
 
 
   const filteredScenarios = scenarios.filter(scenario =>
     scenario.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     scenario.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    scenario.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
+    (Array.isArray(scenario.tags) && scenario.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
   );
 
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
-    setPastedAttributesText(''); 
+    setPastedAttributesText('');
   };
 
-  const handleSaveScenario = () => {
-    if (editingScenario) {
-      const now = new Date().toISOString().split('T')[0];
-      const scenarioToSave = { ...editingScenario, lastModified: now };
-      if (editingScenario.id === 'new' || editingScenario.id.startsWith('imported-')) {
-        setScenarios(prev => [...prev, { ...scenarioToSave, id: `scn${Date.now()}` }]);
+  const handleSaveScenario = async () => {
+    if (!editingScenario) return;
+    setIsSaving(true);
+    const isNew = editingScenario.id === 'new' || editingScenario.id.startsWith('imported-');
+    const url = isNew ? '/api/scenarios' : `/api/scenarios/${editingScenario.id}`;
+    const method = isNew ? 'POST' : 'PUT';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingScenario),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to ${isNew ? 'create' : 'update'} scenario`);
+      }
+      const savedScenario = await response.json();
+
+      if (isNew) {
+        setScenarios(prev => [...prev, savedScenario]);
       } else {
-        setScenarios(prev => prev.map(s => s.id === editingScenario.id ? scenarioToSave : s));
+        setScenarios(prev => prev.map(s => s.id === savedScenario.id ? savedScenario : s));
       }
       handleEditScenario(null);
-      toast({ title: "Scenario Saved", description: `Scenario "${scenarioToSave.name}" has been saved.` });
+      toast({ title: "Scenario Saved", description: `Scenario "${savedScenario.name}" has been saved.` });
+    } catch (error: any) {
+      console.error(`Error saving scenario:`, error);
+      toast({ title: "Save Failed", description: error.message || "Could not save scenario.", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteScenario = async (scenarioId: string) => {
+    // Basic confirmation, can be replaced with a confirmation dialog
+    if (!window.confirm("Are you sure you want to delete this scenario?")) {
+      return;
+    }
+    setIsLoading(true); // Or a specific deleting state
+    try {
+      const response = await fetch(`/api/scenarios/${scenarioId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to delete scenario');
+      }
+      setScenarios(prev => prev.filter(s => s.id !== scenarioId));
+      toast({ title: "Scenario Deleted", description: "Scenario successfully deleted." });
+    } catch (error: any) {
+      console.error("Error deleting scenario:", error);
+      toast({ title: "Delete Failed", description: error.message || "Could not delete scenario.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -200,8 +231,8 @@ export default function ScenariosPage() {
       name: name,
       description: '',
       variables: [],
-      steps: [{ id: `step_new_1`, type: 'radius', name: 'Initial RADIUS Request', details: { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 } }],
-      lastModified: new Date().toISOString().split('T')[0],
+      steps: [{ id: `step_new_1_${Date.now()}`, type: 'radius', name: 'Initial RADIUS Request', details: { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 } }],
+      lastModified: new Date().toISOString().split('T')[0], // Placeholder, backend will set actual
       tags: [],
     });
   };
@@ -331,7 +362,7 @@ export default function ScenariosPage() {
       }
     }
   };
-  
+
   const addApiHeader = (stepIndex: number) => {
     if (editingScenario) {
       const updatedSteps = [...editingScenario.steps];
@@ -381,9 +412,9 @@ export default function ScenariosPage() {
     try {
       const input: ParseRadiusAttributesInput = { rawAttributesText: pastedAttributesText };
       const result: ParseRadiusAttributesOutput = await parseRadiusAttributesFromString(input);
-      
+
       const newExpectedAttributes: ExpectedReplyAttribute[] = result.parsedAttributes.map(pa => ({
-        id: `exp_attr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, 
+        id: `exp_attr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         name: pa.name,
         value: pa.value,
       }));
@@ -393,7 +424,7 @@ export default function ScenariosPage() {
       if (step.type === 'radius') {
         step.details.expectedAttributes = newExpectedAttributes;
         setEditingScenario({ ...editingScenario, steps: updatedSteps });
-        setPastedAttributesText(''); 
+        setPastedAttributesText('');
         toast({ title: "Attributes Parsed", description: `${newExpectedAttributes.length} attributes added/updated.` });
       }
     } catch (error) {
@@ -440,9 +471,9 @@ export default function ScenariosPage() {
         if (typeof importedData.name !== 'string' || !Array.isArray(importedData.steps)) {
           throw new Error("Invalid scenario file format. Missing 'name' or 'steps'.");
         }
-        
+
         const scenarioToEdit: Scenario = {
-          id: `imported-${Date.now()}`, 
+          id: `imported-${Date.now()}`,
           name: importedData.name || "Imported Scenario",
           description: importedData.description || "",
           variables: Array.isArray(importedData.variables) ? importedData.variables.map((v: any) => ({
@@ -482,14 +513,14 @@ export default function ScenariosPage() {
     <div className="space-y-8">
       <PageHeader
         title="Scenario Builder"
-        description="Design complex RADIUS test scenarios. Conditional logic is visual only. API calls are for external system interaction. Step reordering (drag & drop) is not yet implemented."
+        description="Design complex RADIUS test scenarios. Conditional logic and API calls are visual only. Step reordering (drag & drop) is not yet implemented."
         actions={
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept=".json" />
-            <Button variant="outline" onClick={handleImportClick}>
+            <Button variant="outline" onClick={handleImportClick} disabled={isLoading}>
               <Upload className="mr-2 h-4 w-4" /> Import Scenario
             </Button>
-            <Button onClick={() => createNewScenario()}>
+            <Button onClick={() => createNewScenario()} disabled={isLoading}>
               <PlusCircle className="mr-2 h-4 w-4" /> Create New Scenario
             </Button>
           </div>
@@ -506,10 +537,17 @@ export default function ScenariosPage() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="max-w-sm"
+              disabled={isLoading}
             />
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center items-center h-40">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-2 text-muted-foreground">Loading scenarios...</p>
+            </div>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -532,7 +570,7 @@ export default function ScenariosPage() {
                       {scenario.tags.map(tag => <Badge key={tag} variant="secondary">{tag}</Badge>)}
                     </div>
                   </TableCell>
-                  <TableCell>{scenario.lastModified}</TableCell>
+                  <TableCell>{new Date(scenario.lastModified).toLocaleDateString()}</TableCell>
                   <TableCell className="text-right">
                      <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -552,7 +590,7 @@ export default function ScenariosPage() {
                           <Copy className="mr-2 h-4 w-4" /> Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10">
+                        <DropdownMenuItem onClick={() => handleDeleteScenario(scenario.id)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -560,7 +598,7 @@ export default function ScenariosPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filteredScenarios.length === 0 && (
+              {filteredScenarios.length === 0 && !isLoading && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     No scenarios found. Try adjusting your search or create a new scenario.
@@ -569,7 +607,13 @@ export default function ScenariosPage() {
               )}
             </TableBody>
           </Table>
+          )}
         </CardContent>
+         <CardFooter>
+            <p className="text-sm text-muted-foreground">
+              {isLoading ? "Loading..." : `Showing ${filteredScenarios.length} of ${scenarios.length} scenarios.`}
+            </p>
+         </CardFooter>
       </Card>
 
       <Dialog open={!!editingScenario} onOpenChange={(isOpen) => !isOpen && handleEditScenario(null)}>
@@ -577,15 +621,15 @@ export default function ScenariosPage() {
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' || editingScenario?.id.startsWith('imported-') ? 'Create/Edit Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-             Define scenario properties, variables, and steps. Conditional logic is visual only. API calls are for external system interaction. Step reordering (drag & drop) is not yet implemented.
+             Define scenario properties, variables, and steps. Conditional logic and API calls are visual representations only. Step reordering (drag & drop) is not yet implemented.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden min-h-0">
               {/* Left Panel: Scenario Details & Variables */}
-              <div className="md:col-span-1 border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden">
-                <ScrollArea className="h-full">
-                  <div className="space-y-4 pr-2">
+              <div className="md:col-span-1 flex flex-col border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden">
+                <ScrollArea className="flex-grow pr-2">
+                  <div className="space-y-4">
                     <Card>
                       <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
                       <CardContent className="space-y-3">
@@ -603,7 +647,7 @@ export default function ScenariosPage() {
                         </div>
                       </CardContent>
                     </Card>
-                    <Card>
+                    <Card className="flex-shrink-0">
                       <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Variable className="h-5 w-5 text-primary"/>Variables</CardTitle></CardHeader>
                       <CardContent className="space-y-3">
                         {editingScenario.variables.map((variable, index) => (
@@ -637,7 +681,7 @@ export default function ScenariosPage() {
               </div>
 
               {/* Right Panel: Scenario Steps */}
-              <div className="md:col-span-2 flex flex-col h-full border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden"> 
+              <div className="md:col-span-2 flex flex-col h-full border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden">
                 <div className="flex justify-between items-center mb-2 flex-shrink-0">
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
                     <DropdownMenu>
@@ -687,20 +731,20 @@ export default function ScenariosPage() {
                                   </SelectContent>
                                 </Select>
                               </div>
-                              
+
                               <div className="space-y-2 pt-2">
                                 <Label className="font-medium">Expected Reply Attributes (Paste or Add Manually):</Label>
-                                <Textarea 
-                                  value={pastedAttributesText} 
+                                <Textarea
+                                  value={pastedAttributesText}
                                   onChange={(e) => setPastedAttributesText(e.target.value)}
                                   placeholder={'User-Name = "testuser"\nFramed-IP-Address = 10.0.0.1\nAcct-Status-Type = Start'}
                                   rows={3}
                                   className="font-mono text-xs"
                                 />
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  onClick={() => handleParsePastedAttributes(index)} 
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleParsePastedAttributes(index)}
                                   disabled={isParsingAttributes}
                                   className="w-full"
                                 >
@@ -767,7 +811,7 @@ export default function ScenariosPage() {
                           {(step.type === 'loop_end' || step.type === 'conditional_end') && (
                             <p className="pl-7 text-sm text-muted-foreground">Marks the end of the block.</p>
                           )}
-                          
+
                           {step.type === 'api_call' && (
                             <div className="space-y-3 pl-7 text-sm">
                               <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })}/></div>
@@ -823,14 +867,18 @@ export default function ScenariosPage() {
             </div>
           )}
           <DialogFooter className="mt-auto pt-4 border-t flex-shrink-0">
-            <Button variant="outline" onClick={handleExportScenario} disabled={!editingScenario}>
+             <Button variant="outline" onClick={handleExportScenario} disabled={!editingScenario || isSaving}>
                 <Download className="mr-2 h-4 w-4" /> Export Scenario
             </Button>
-            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSaveScenario}><Save className="mr-2 h-4 w-4" /> Save Scenario</Button>
+            <DialogClose asChild><Button variant="outline" disabled={isSaving}>Cancel</Button></DialogClose>
+            <Button onClick={handleSaveScenario} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Save Scenario
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   );
 }
+
