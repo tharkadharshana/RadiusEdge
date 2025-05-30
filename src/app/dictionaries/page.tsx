@@ -35,9 +35,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
-import type { ParseDictionaryContentOutput, ParsedAttribute, ParsedEnum } from '@/ai/flows/parse-dictionary-file-content';
+import type { ParseDictionaryContentOutput, ParsedAttribute as AiParsedAttribute, ParsedEnum as AiParsedEnum } from '@/ai/flows/parse-dictionary-file-content'; // Renamed to avoid conflict
 
-export interface Attribute {
+export interface Attribute { // This is for manually managed example attributes or parsed ones
   id: string;
   name: string;
   code: string;
@@ -45,7 +45,8 @@ export interface Attribute {
   vendor?: string;
   description?: string;
   options?: string[];
-  enumValues?: (string | ParsedEnum)[]; 
+  // Storing ParsedEnum directly for simplicity, though it has an 'id' field we might not use for display here.
+  enumValues?: (string | AiParsedEnum)[]; 
   examples?: string;
 }
 
@@ -53,11 +54,11 @@ export interface Dictionary {
   id: string;
   name: string;
   source: string;
-  attributes: number; 
-  vendorCodes: number; 
+  attributes: number; // Count of exampleAttributes or parsed attributes
+  vendorCodes: number; // Placeholder, could be derived
   isActive: boolean;
-  lastUpdated: string; 
-  exampleAttributes?: Attribute[]; 
+  lastUpdated: string; // ISO String
+  exampleAttributes?: Attribute[]; // Array of Attribute objects, parsed from JSON string from API
 }
 
 
@@ -69,8 +70,8 @@ export default function DictionariesPage() {
   const [currentAttributeToEdit, setCurrentAttributeToEdit] = useState<Partial<Attribute> & { isNew?: boolean } | null>(null);
   const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // General saving state for actions like toggle, bulk operations
-  const [isSavingAttributes, setIsSavingAttributes] = useState(false); // Specific for saving attributes in dialog
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSavingAttributes, setIsSavingAttributes] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [importMode, setImportMode] = useState<'manual' | 'paste' | 'upload'>('manual');
   const [newDictName, setNewDictName] = useState('');
@@ -84,7 +85,7 @@ export default function DictionariesPage() {
   const { toast } = useToast();
 
   const fetchDictionaries = useCallback(async () => {
-    console.log("fetchDictionaries called");
+    console.log("FRONTEND: fetchDictionaries called");
     setIsLoading(true);
     try {
       const response = await fetch('/api/dictionaries');
@@ -93,26 +94,26 @@ export default function DictionariesPage() {
         try {
           const errorData = await response.json();
           apiError = errorData.error || errorData.message || apiError;
-          console.error("API error data:", errorData);
+          console.error("FRONTEND: API error data from fetchDictionaries:", errorData);
         } catch (e) {
           const textError = await response.text().catch(() => "Could not get error text from response.");
           apiError += `. Response: ${textError.substring(0, 150)}`;
-          console.error("Non-JSON API error response:", textError);
+          console.error("FRONTEND: Non-JSON API error response from fetchDictionaries:", textError);
         }
         throw new Error(apiError);
       }
       const data: Dictionary[] = await response.json();
+      // The API should now return exampleAttributes already parsed as an array of objects
       setDictionaries(data.map(d => ({ 
         ...d, 
-        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [],
+        exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [], // Ensure it's an array
         attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : (d.attributes || 0),
         vendorCodes: d.vendorCodes || 0, 
       })));
-      console.log("Dictionaries fetched and set:", data.length);
+      console.log("FRONTEND: Dictionaries fetched and set:", data.length);
     } catch (error) {
-      console.error("Error fetching dictionaries (frontend catch):", error);
+      console.error("FRONTEND: Error in fetchDictionaries (catch block):", error);
       toast({ title: "Error Fetching Dictionaries", description: (error as Error).message, variant: "destructive" });
-      // setDictionaries([]); // Optionally clear on error, or keep stale data
     } finally {
       setIsLoading(false);
     }
@@ -133,26 +134,30 @@ export default function DictionariesPage() {
   };
 
   const handleImportDictionary = async () => {
-    setIsSaving(true); // Use general isSaving for import dialog
+    setIsSaving(true);
     let requestBody: any = {};
     let toastTitle = "Import Started";
     let toastDescription = "Processing your dictionary import...";
 
     try {
-      if (importMode === 'upload' && uploadedFiles && uploadedFiles.length > 0) {
-        const filesToProcess = Array.from(uploadedFiles).map(async (file) => {
+      if (importMode === 'upload') {
+        if (!uploadedFiles || uploadedFiles.length === 0) {
+          toast({ title: "No Files Selected", description: "Please select file(s) to upload.", variant: "destructive" });
+          setIsSaving(false); return;
+        }
+        const filesToProcess = await Promise.all(Array.from(uploadedFiles).map(async (file) => {
           try {
             const content = await file.text();
             return { name: file.name, content };
           } catch (readError) {
-            console.error(`Error reading file ${file.name}:`, readError);
+            console.error(`FRONTEND: Error reading file ${file.name}:`, readError);
             toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
             return { name: file.name, content: '' }; // Send with empty content if read fails
           }
-        });
-        requestBody.files = await Promise.all(filesToProcess);
-        toastTitle = requestBody.files.length > 1 ? "Bulk Import Started" : "File Import Started";
-        toastDescription = `Importing ${requestBody.files.length} file(s)... This may take a while if parsing content.`;
+        }));
+        requestBody.files = filesToProcess;
+        toastTitle = filesToProcess.length > 1 ? "Bulk Import Started" : "File Import Started";
+        toastDescription = `Importing ${filesToProcess.length} file(s)... AI parsing content for each.`;
       } else if (importMode === 'paste') {
         if (!pastedDictContent.trim()) {
           toast({ title: "No Content", description: "Please paste dictionary content.", variant: "destructive" });
@@ -169,7 +174,8 @@ export default function DictionariesPage() {
         }
         requestBody.name = newDictName;
         requestBody.source = newDictSource || "Manually Created";
-        toastDescription = `Creating dictionary ${newDictName}...`;
+        // No rawContent, so no AI parsing for purely manual entry unless user adds it later
+        toastDescription = `Creating dictionary metadata for ${newDictName}...`;
       }
       
       toast({ title: toastTitle, description: toastDescription});
@@ -187,16 +193,16 @@ export default function DictionariesPage() {
       
       const resultData = await response.json();
       if (Array.isArray(resultData)) { 
-         toast({ title: "Bulk Import Processed", description: `${resultData.length} dictionary entries created/updated.` });
+         toast({ title: "Bulk Import Processed", description: `${resultData.length} dictionary entries processed.` });
       } else { 
-         toast({ title: "Dictionary Imported", description: `Dictionary "${resultData.name}" added/updated.` });
+         toast({ title: "Dictionary Imported", description: `Dictionary "${resultData.name}" processed.` });
       }
 
       resetImportDialog();
-      await fetchDictionaries(); // Ensure this is awaited
+      await fetchDictionaries();
       setSelectedDictionaryIds([]);
     } catch (error) {
-      console.error("Error importing dictionary:", error);
+      console.error("FRONTEND: Error importing dictionary:", error);
       toast({ title: "Import Failed", description: (error as Error).message, variant: "destructive" });
     } finally {
       setIsSaving(false);
@@ -227,7 +233,7 @@ export default function DictionariesPage() {
       } : d));
       toast({ title: "Success", description: `Dictionary "${updatedDict.name}" status updated.` });
     } catch (error) {
-      console.error("Error toggling dictionary status:", error);
+      console.error("FRONTEND: Error toggling dictionary status:", error);
       toast({ title: "Update Failed", description: (error as Error).message, variant: "destructive" });
       setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict)); 
     } finally {
@@ -236,22 +242,30 @@ export default function DictionariesPage() {
   };
 
   const handleDeleteDictionary = async (id: string, name: string) => {
-    console.log("Frontend: handleDeleteDictionary called for ID:", id, "Name:", name);
-    if (!window.confirm(`Are you sure you want to delete the dictionary "${name}"? This will also remove its attributes.`)) return;
+    console.log(`FRONTEND: Attempting to delete dictionary ID: ${id}, Name: ${name}`);
+    if (!window.confirm(`Are you sure you want to delete the dictionary "${name}"? This will also remove its attributes.`)) {
+      console.log("FRONTEND: Delete cancelled by user for ID:", id);
+      return;
+    }
     setIsSaving(true);
     try {
       const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
-      console.log("Frontend: Delete API response status:", response.status);
+      console.log(`FRONTEND: Delete API response status for ID ${id}: ${response.status}`);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Failed to parse error response from delete API." }));
-        console.error("Frontend: Delete API error data:", errorData);
-        throw new Error(errorData.error || errorData.message || `Failed to delete dictionary. Status: ${response.status}`);
+        let errorMsg = `Failed to delete dictionary. Status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMsg = errorData.error || errorData.message || errorMsg;
+          console.error(`FRONTEND: Delete API error data for ID ${id}:`, errorData);
+        } catch (e) { /* ignore if response is not json */ }
+        throw new Error(errorMsg);
       }
       toast({ title: "Dictionary Deleted", description: `Dictionary "${name}" removed.` });
-      await fetchDictionaries(); // Await fetch before further state changes
-      setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id));
+      await fetchDictionaries(); // Await the fetch
+      setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id)); // Update selection *after* successful fetch
+      console.log(`FRONTEND: Successfully deleted dictionary ID: ${id}. Refetched dictionaries.`);
     } catch (error) {
-      console.error("Frontend: Error deleting dictionary:", error);
+      console.error(`FRONTEND: Error deleting dictionary ID ${id}:`, error);
       toast({ title: "Delete Failed", description: (error as Error).message, variant: "destructive" });
     } finally {
       setIsSaving(false);
@@ -260,6 +274,7 @@ export default function DictionariesPage() {
 
   const handleViewDictionary = (dictionary: Dictionary) => {
     setSelectedDictionaryForView(dictionary);
+    // Ensure exampleAttributes is an array, even if it comes as undefined/null from older data
     const attributesArray = Array.isArray(dictionary.exampleAttributes) ? dictionary.exampleAttributes : [];
     setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); 
   };
@@ -309,6 +324,7 @@ export default function DictionariesPage() {
     if (!selectedDictionaryForView) return;
     setIsSavingAttributes(true);
     try {
+      // Send the current editingExampleAttributes array as JSON string
       const response = await fetch(`/api/dictionaries/${selectedDictionaryForView.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -320,32 +336,31 @@ export default function DictionariesPage() {
       }
       const updatedDictionary: Dictionary = await response.json();
       
-      // Await fetchDictionaries to ensure the main list is fresh before updating selected item
       await fetchDictionaries();
       
       setSelectedDictionaryForView(prev => prev ? {
-        ...prev, // Keep existing if not fully replaced by fetch
-        ...updatedDictionary, // Overlay with potentially updated fields like lastUpdated
+        ...prev,
+        ...updatedDictionary,
         exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : [],
         attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0,
       } : null);
       toast({ title: "Attributes Saved", description: `Attributes for "${updatedDictionary.name}" updated.` });
     } catch (error) {
-      console.error("Error saving attributes:", error);
+      console.error("FRONTEND: Error saving attributes:", error);
       toast({ title: "Save Failed", description: (error as Error).message, variant: "destructive" });
     } finally {
       setIsSavingAttributes(false);
     }
   };
 
-  const renderAttributeValue = (value: (string | ParsedEnum)[] | undefined): string => {
+  const renderAttributeValue = (value: (string | AiParsedEnum)[] | undefined): string => {
     if (!value || value.length === 0) return 'N/A';
     return value.map(e => {
         if (typeof e === 'string') return e;
         return `${e.name} (${e.value})`; 
     }).join(', ');
   };
-
+  
   const isAllSelected = dictionaries.length > 0 && selectedDictionaryIds.length === dictionaries.length;
   const isSomeSelected = selectedDictionaryIds.length > 0 && !isAllSelected;
 
@@ -358,15 +373,18 @@ export default function DictionariesPage() {
     headerCheckboxCheckedState = false;
   }
 
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
+  const handleSelectAll = (checked: boolean | 'indeterminate') => {
+    // When the header checkbox is clicked, its `checked` state will be boolean
+    console.log("FRONTEND: handleSelectAll called with checked:", checked);
+    if (checked === true) {
       setSelectedDictionaryIds(dictionaries.map(d => d.id));
-    } else {
+    } else { 
       setSelectedDictionaryIds([]);
     }
   };
 
   const handleSelectRow = (id: string, checked: boolean) => {
+    console.log(`FRONTEND: handleSelectRow called for ID ${id}, checked: ${checked}`);
     setSelectedDictionaryIds(prev => 
       checked ? [...prev, id] : prev.filter(selectedId => selectedId !== id)
     );
@@ -393,7 +411,6 @@ export default function DictionariesPage() {
         }
         return res.json();
       }).catch(error => {
-        // Rethrow to be caught by Promise.allSettled
         throw new Error(error.message || `Failed to ${action.toLowerCase()} dictionary ID ${id}`);
       })
     );
@@ -425,12 +442,15 @@ export default function DictionariesPage() {
   };
 
   const handleBulkDelete = async () => {
-    console.log("Frontend: handleBulkDelete called with selected IDs:", selectedDictionaryIds);
+    console.log("FRONTEND: handleBulkDelete called with selected IDs:", selectedDictionaryIds);
     if (selectedDictionaryIds.length === 0) {
       toast({ title: "No Dictionaries Selected", description: "Please select dictionaries to delete.", variant: "default" });
       return;
     }
-    if (!window.confirm(`Are you sure you want to delete ${selectedDictionaryIds.length} selected dictionaries? This action cannot be undone.`)) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedDictionaryIds.length} selected dictionaries? This action cannot be undone.`)) {
+      console.log("FRONTEND: Bulk delete cancelled by user.");
+      return;
+    }
 
     setIsSaving(true);
     toast({ title: "Bulk Delete In Progress", description: `Attempting to delete ${selectedDictionaryIds.length} dictionaries...` });
@@ -438,22 +458,22 @@ export default function DictionariesPage() {
     const deletePromises = selectedDictionaryIds.map(id =>
       fetch(`/api/dictionaries/${id}`, { method: 'DELETE' })
       .then(async res => {
-        console.log(`Frontend: Bulk delete API response for ID ${id}:`, res.status);
+        console.log(`FRONTEND: Bulk delete API response for ID ${id}, Status: ${res.status}`);
         if (!res.ok) {
             let errorMsg = `Failed to delete dictionary ID ${id}. Status: ${res.status}`;
             try {
                 const errorData = await res.json();
-                console.error(`Frontend: Bulk delete API error data for ID ${id}:`, errorData);
+                console.error(`FRONTEND: Bulk delete API error data for ID ${id}:`, errorData);
                 errorMsg = errorData.message || errorData.error || errorMsg;
-            } catch (e) { /* ignore if response is not json */ }
+            } catch (e) { console.warn(`FRONTEND: Could not parse JSON error for ID ${id} during bulk delete.`); }
             throw new Error(errorMsg);
         }
-        // If successful, return a success marker
-        return { id, deleted: true, apiResponse: await res.json().catch(() => ({})) };
+        const responseData = await res.json().catch(() => ({ message: "Successfully deleted, but no response body" }));
+        console.log(`FRONTEND: Successfully processed delete for ID ${id}. Response:`, responseData);
+        return { id, deleted: true, apiResponse: responseData };
       })
       .catch(error => {
-          console.error(`Frontend: Error in fetch promise for ID ${id}:`, error);
-          // Ensure the error thrown is an Error instance with a message
+          console.error(`FRONTEND: Error in fetch promise for ID ${id} during bulk delete:`, error);
           throw new Error(error.message || `Failed to process deletion for dictionary ID ${id} due to an unknown error.`);
         })
     );
@@ -467,7 +487,7 @@ export default function DictionariesPage() {
         successfulDeletesCount++;
       } else { 
         failedDeletesMessages.push(result.reason.message);
-        console.error(`Frontend: Bulk delete failure reported by Promise.allSettled:`, result.reason.message);
+        console.error(`FRONTEND: Bulk delete failure reported by Promise.allSettled:`, result.reason.message);
       }
     });
 
@@ -483,17 +503,12 @@ export default function DictionariesPage() {
       toast({ title: "Bulk Delete Successful", description: `All ${successfulDeletesCount} selected dictionaries deleted.` });
     } else if (selectedDictionaryIds.length > 0 && successfulDeletesCount === 0 && failedDeletesMessages.length === 0) {
        toast({ title: "Bulk Delete: No Changes", description: "Operation completed. No dictionaries were deleted (perhaps they were already gone or an unknown issue occurred).", variant: "default" });
-    } else { 
-       toast({ title: "Bulk Delete Failed", description: "No dictionaries were deleted. All attempts failed. Check console for errors.", variant: "destructive" });
+    } else if (selectedDictionaryIds.length > 0) { // if some were selected but all failed or none processed
+       toast({ title: "Bulk Delete Failed", description: "No dictionaries were deleted. All attempts failed or no changes were made. Check console for errors.", variant: "destructive" });
     }
     
-    console.log("Frontend: Calling fetchDictionaries after bulk delete operations.");
-    try {
-      await fetchDictionaries(); 
-    } catch (fetchError) {
-       console.error("Frontend: Failed to refresh dictionaries after bulk delete:", fetchError);
-       toast({ title: "Refresh Failed", description: "Could not refresh dictionary list after deletion.", variant: "destructive" });
-    }
+    console.log("FRONTEND: Calling fetchDictionaries after bulk delete operations.");
+    await fetchDictionaries(); 
     setSelectedDictionaryIds([]); 
     setIsSaving(false);
   };
@@ -550,11 +565,11 @@ export default function DictionariesPage() {
                     <>
                       <div>
                         <Label htmlFor="dict-name">Dictionary Name</Label>
-                        <Input id="dict-name" value={newDictName} onChange={(e) => setNewDictName(e.target.value)} placeholder="e.g., My Custom VSAs" disabled={isSaving} />
+                        <Input id="dict-name" value={newDictName} onChange={(e) => setNewDictName(e.target.value)} placeholder="e.g., My Custom VSAs (optional if parsing)" disabled={isSaving} />
                       </div>
                       <div>
                         <Label htmlFor="dict-source">Source / Vendor</Label>
-                        <Input id="dict-source" value={newDictSource} onChange={(e) => setNewDictSource(e.target.value)} placeholder="e.g., Custom, AcmeCorp" disabled={isSaving} />
+                        <Input id="dict-source" value={newDictSource} onChange={(e) => setNewDictSource(e.target.value)} placeholder="e.g., Custom, AcmeCorp (optional if parsing)" disabled={isSaving} />
                       </div>
                     </>
                   )}
@@ -604,7 +619,7 @@ export default function DictionariesPage() {
                    <Checkbox
                     checked={headerCheckboxCheckedState}
                     onCheckedChange={(checked) => {
-                        handleSelectAll(!!checked); // Ensure boolean for Radix onCheckedChange
+                        handleSelectAll(!!checked); 
                     }}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
