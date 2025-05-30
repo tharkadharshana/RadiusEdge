@@ -120,7 +120,8 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log_info('Users table schema checked/created.');
 
-  // Dictionaries Table (for metadata and example attributes)
+  // Dictionaries Table
+  console.log_info("Preparing to check/create 'dictionaries' table.");
   await db.exec(`
     CREATE TABLE IF NOT EXISTS dictionaries (
       id TEXT PRIMARY KEY,
@@ -128,33 +129,39 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       source TEXT,
       isActive BOOLEAN DEFAULT TRUE,
       lastUpdated TEXT,
-      exampleAttributes TEXT DEFAULT '[]' -- Ensure default is a valid JSON array string
+      exampleAttributes TEXT DEFAULT '[]'
     );
   `);
-  console.log_info('Dictionaries table schema base checked/created.');
+  console.log_info("'dictionaries' table base schema checked/created with 'exampleAttributes' DEFAULT '[]'.");
 
-  // Robustly check and add exampleAttributes column if missing
+  // Robustly check and add exampleAttributes column if missing from an older schema version
   try {
-    console.log_info("Checking 'dictionaries' table for 'exampleAttributes' column...");
+    console.log_info("Checking 'dictionaries' table structure for 'exampleAttributes' column...");
     const columns = await db.all("PRAGMA table_info(dictionaries);");
     const hasExampleAttributesColumn = columns.some(col => (col as any).name === 'exampleAttributes');
 
     if (!hasExampleAttributesColumn) {
-      console.log_warn("Column 'exampleAttributes' not found in 'dictionaries' table. Attempting to add it...");
+      console.log_warn("Column 'exampleAttributes' not found in 'dictionaries' table. Attempting to ADD it with DEFAULT '[]'...");
       await db.exec("ALTER TABLE dictionaries ADD COLUMN exampleAttributes TEXT DEFAULT '[]';");
-      console.log_info("Column 'exampleAttributes' added to 'dictionaries' table with DEFAULT '[]'.");
+      console.log_info("Column 'exampleAttributes' ADDED to 'dictionaries' table with DEFAULT '[]'.");
+      // After adding, ensure any existing rows (if any could exist before this alter) get the default.
+      // This is more for safety as new rows would get the default.
+      const updateExistingNulls = await db.run("UPDATE dictionaries SET exampleAttributes = '[]' WHERE exampleAttributes IS NULL;");
+      if (updateExistingNulls.changes && updateExistingNulls.changes > 0) {
+        console.log_info(`Updated ${updateExistingNulls.changes} existing rows to set exampleAttributes = '[]' after ALTER TABLE.`);
+      }
     } else {
       console.log_info("Column 'exampleAttributes' already exists in 'dictionaries' table.");
+      // If the column exists but somehow some rows have NULL (e.g., from a previous failed migration attempt), set them to '[]'
+      const updateExistingNulls = await db.run("UPDATE dictionaries SET exampleAttributes = '[]' WHERE exampleAttributes IS NULL;");
+      if (updateExistingNulls.changes && updateExistingNulls.changes > 0) {
+        console.log_info(`Updated ${updateExistingNulls.changes} existing rows where exampleAttributes was NULL to '[]'.`);
+      }
     }
-    // Ensure any existing NULLs are updated to '[]'
-    const updateNullsResult = await db.run("UPDATE dictionaries SET exampleAttributes = '[]' WHERE exampleAttributes IS NULL;");
-    if (updateNullsResult.changes && updateNullsResult.changes > 0) {
-        console.log_info(`Updated ${updateNullsResult.changes} rows in 'dictionaries' table to set NULL exampleAttributes to '[]'.`);
-    }
-
   } catch (error) {
-    console.error("Error during 'dictionaries' table schema migration for 'exampleAttributes':", error);
+    console.error("Error during 'dictionaries' table schema check/migration for 'exampleAttributes':", error);
   }
+  console.log_info("Finished schema check for 'dictionaries.exampleAttributes'.");
 
 
   // Test Results Table
@@ -233,5 +240,3 @@ function console_log_warn(message: string, ...optionalParams: any[]) {
 if (process.env.NODE_ENV !== 'production') {
   getDb().catch(err => console.error("Failed to initialize DB on module load:", err));
 }
-
-    
