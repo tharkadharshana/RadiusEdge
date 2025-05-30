@@ -6,10 +6,26 @@ import type { Scenario } from '@/app/scenarios/page'; // Assuming Scenario type 
 import { v4 as uuidv4 } from 'uuid';
 
 // GET all scenarios
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit') as string, 10) : undefined;
+  const sortBy = searchParams.get('sortBy'); // e.g., 'lastModified'
+
   try {
     const db = await getDb();
-    const scenariosFromDb = await db.all('SELECT * FROM scenarios ORDER BY lastModified DESC');
+    let query = 'SELECT * FROM scenarios';
+    
+    if (sortBy === 'lastModified') {
+      query += ' ORDER BY lastModified DESC';
+    } else {
+      query += ' ORDER BY name ASC'; // Default sort
+    }
+
+    if (limit) {
+      query += ` LIMIT ${limit}`;
+    }
+
+    const scenariosFromDb = await db.all(query);
     
     const scenarios: Scenario[] = scenariosFromDb.map(s => ({
       ...s,

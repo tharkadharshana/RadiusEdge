@@ -6,12 +6,18 @@ import type { TestResult } from '@/app/results/page'; // Assuming TestResult typ
 import { v4 as uuidv4 } from 'uuid';
 
 // GET all test results
-// TODO: Add filtering capabilities (scenarioName, status, server, date range) via query params
 export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit') as string, 10) : undefined;
+
   try {
     const db = await getDb();
-    // For now, order by timestamp descending to get recent results first
-    const resultsFromDb = await db.all('SELECT * FROM test_results ORDER BY timestamp DESC');
+    let query = 'SELECT * FROM test_results ORDER BY timestamp DESC';
+    if (limit) {
+      query += ` LIMIT ${limit}`;
+    }
+    
+    const resultsFromDb = await db.all(query);
     
     const results: TestResult[] = resultsFromDb.map(r => ({
       ...r,

@@ -13,14 +13,22 @@ export interface AiInteraction {
 }
 
 // GET all AI interactions
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit') as string, 10) : undefined;
+
   try {
     const db = await getDb();
-    const interactionsFromDb = await db.all('SELECT * FROM ai_interactions ORDER BY timestamp DESC');
+    let query = 'SELECT * FROM ai_interactions ORDER BY timestamp DESC';
+    if (limit) {
+      query += ` LIMIT ${limit}`;
+    }
+    const interactionsFromDb = await db.all(query);
     
     const interactions: AiInteraction[] = interactionsFromDb.map(i => ({
       ...i,
-      // No JSON parsing needed here for userInput/aiOutput for listing, frontend can parse if needed
+      // userInput and aiOutput are already strings, no need to parse for list display
+      // Frontend will parse when displaying full details
     })) as AiInteraction[];
 
     return NextResponse.json(interactions);
