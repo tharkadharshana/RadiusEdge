@@ -14,6 +14,16 @@ let dbInstance: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!dbInstance) {
     const verboseSqlite3 = sqlite3.verbose();
+    // Ensure the directory exists in production
+    if (process.env.NODE_ENV === 'production') {
+        const fs = await import('fs/promises');
+        try {
+            await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+        } catch (err) {
+            console.error('Failed to create .data directory:', err);
+            // Depending on policy, you might want to throw here or let open() fail
+        }
+    }
     dbInstance = await open({
       filename: DB_PATH,
       driver: verboseSqlite3.Database,
@@ -118,10 +128,31 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       source TEXT,
       isActive BOOLEAN DEFAULT TRUE,
       lastUpdated TEXT,       -- Store as ISO8601 string
-      exampleAttributes TEXT  -- Store as JSON string of example Attribute objects
+      exampleAttributes TEXT  -- Store as JSON string of example Attribute objects, defaults to '[]'
     );
   `);
-  console.log('Dictionaries table checked/created.');
+  console.log('Dictionaries table schema base checked/created.');
+
+  // Attempt to add exampleAttributes column if it doesn't exist
+  try {
+    const columns = await db.all("PRAGMA table_info(dictionaries);");
+    const hasExampleAttributesColumn = columns.some(col => (col as any).name === 'exampleAttributes');
+
+    if (!hasExampleAttributesColumn) {
+      console.log("Column 'exampleAttributes' not found in 'dictionaries' table. Attempting to add it...");
+      await db.exec("ALTER TABLE dictionaries ADD COLUMN exampleAttributes TEXT;");
+      // Initialize existing rows to '[]' if the column was just added.
+      // This helps avoid issues with API trying to parse NULL.
+      await db.exec("UPDATE dictionaries SET exampleAttributes = '[]' WHERE exampleAttributes IS NULL;");
+      console.log("Column 'exampleAttributes' added to 'dictionaries' table and initialized for existing rows.");
+    } else {
+      // console.log("Column 'exampleAttributes' already exists in 'dictionaries' table.");
+    }
+  } catch (error) {
+    console.error("Error checking/altering 'dictionaries' table for 'exampleAttributes' column:", error);
+    // Depending on policy, you might want to throw here or let open() fail
+  }
+
 
   // Test Results Table
   await db.exec(`
