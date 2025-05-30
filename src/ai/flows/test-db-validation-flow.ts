@@ -196,6 +196,12 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
   if (haltPreamble) {
     output.overallStatus = 'preamble_failure';
     output.dbConnectionStatus = 'skipped'; // Skip DB connection if preamble failed
+    // Also skip validation steps if preamble failed
+    if (input.validationSteps && input.validationSteps.length > 0) {
+        input.validationSteps.forEach(stepConfig => {
+            output.validationStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, type: stepConfig.type, output: 'Skipped due to preamble failure.' });
+        });
+    }
     return output;
   }
 
@@ -208,6 +214,12 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
     output.dbConnectionStatus = 'failure';
     output.dbConnectionError = `Simulated: Failed to connect to ${input.dbType} server ${input.dbHost}:${input.dbPort} as ${input.dbUsername}.`;
     output.overallStatus = 'connection_failure';
+    // Also skip validation steps if DB connection failed
+    if (input.validationSteps && input.validationSteps.length > 0) {
+        input.validationSteps.forEach(stepConfig => {
+            output.validationStepResults?.push({ stepName: stepConfig.name, status: 'skipped', command: stepConfig.type === 'ssh' ? stepConfig.commandOrQuery : undefined, query: stepConfig.type === 'sql' ? stepConfig.commandOrQuery : undefined, type: stepConfig.type, output: 'Skipped due to DB connection failure.' });
+        });
+    }
     return output;
   }
 
@@ -230,37 +242,32 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
     }
   }
 
-  if (haltValidation) {
-    output.overallStatus = 'validation_failure';
-  } else if (output.preambleStepResults?.some(r => r.status === 'failure')) { // Should be caught by haltPreamble
-    output.overallStatus = 'preamble_failure';
-  } else if (output.dbConnectionStatus === 'failure') { // Should be caught earlier
-    output.overallStatus = 'connection_failure';
+  // Determine overall status based on collected results
+  if (output.preambleStepResults?.some(r => r.status === 'failure')) {
+      output.overallStatus = 'preamble_failure';
+  } else if (output.dbConnectionStatus === 'failure') {
+      output.overallStatus = 'connection_failure';
+  } else if (output.validationStepResults?.some(r => r.status === 'failure')) {
+      output.overallStatus = 'validation_failure';
   } else {
-    // If we reached here, preamble (if any) and DB connection were successful, and no validation steps failed.
-    // Check if any non-mandatory steps in preamble or validation had issues but didn't halt (not possible with current halt logic)
-    // For simplicity, if no halts, consider it success for now.
-    // A more nuanced 'partial_success' could be if all mandatory passed, but some optional failed (but current halt logic prevents this)
-    const allValidationStepsWereSuccessfulOrSkippedByUser = output.validationStepResults?.filter(r => {
-        const originalStep = input.validationSteps.find(s => s.name === r.stepName);
-        return originalStep?.isEnabled;
-    }).every(r => r.status === 'success' || r.status === 'skipped') ?? true; // true if no validation steps
+      // Check if there were any actual enabled steps to run
+      const anyEnabledPreamble = input.sshPreambleSteps?.some(s => s.isEnabled) ?? false;
+      const anyEnabledValidation = input.validationSteps?.some(s => s.isEnabled) ?? false;
+      const anyEnabledSteps = anyEnabledPreamble || anyEnabledValidation;
 
-    if (allValidationStepsWereSuccessfulOrSkippedByUser) {
-         output.overallStatus = 'success';
-    } else {
-        // This state implies some enabled validation steps did not result in 'success' but didn't cause a halt.
-        // With the current "halt on any failure" logic for enabled steps, this implies all enabled steps were user-disabled.
-        output.overallStatus = 'partial_success'; 
-    }
-  }
-  
-  // Final check: if overallStatus is still 'testing' (e.g. no steps, no preamble, only DB connection)
-  if (output.overallStatus === 'testing') {
-      if (output.dbConnectionStatus === 'success' && (!input.validationSteps || input.validationSteps.filter(s=>s.isEnabled).length === 0)) {
-          output.overallStatus = 'success'; // Connected, no validation to run or all disabled
+      if (!anyEnabledSteps && output.dbConnectionStatus === 'success') {
+           // Connected, but no preamble or validation steps were enabled to run
+          output.overallStatus = 'success'; // Consider success if only DB connection was tested and it passed
+      } else if (anyEnabledSteps && output.validationStepResults?.filter(r => {
+          const originalStep = input.validationSteps.find(s => s.name === r.stepName);
+          return originalStep?.isEnabled;
+      }).every(r => r.status === 'success' || r.status === 'skipped')) {
+          output.overallStatus = 'success';
+      } else if (output.overallStatus === 'testing') { // If still testing, it means no failures and db connection was successful
+          output.overallStatus = 'success';
       } else {
-          output.overallStatus = 'partial_success'; // Default if not clearly defined
+          // This case should ideally be caught by specific failure statuses
+          output.overallStatus = 'partial_success'; 
       }
   }
 
@@ -276,10 +283,10 @@ const testDbValidationInternalFlow = ai.defineFlow(
     outputSchema: TestDbValidationOutputSchema,
   },
   async (input) => {
+    // This internal flow directly calls the exported async function.
+    // This is a common pattern if the exported function already contains all the logic.
     return testDbValidation(input);
   }
 );
 // Schemas are defined above.
 // Only types and the main async function `testDbValidation` are exported.
-
-    
