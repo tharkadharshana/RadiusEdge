@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle, Edit3, Trash2, Save, Server as ServerIcon, KeyRound, ShieldCheck, MoreHorizontal, Loader2, CheckCircle, XCircle, AlertTriangle, ListChecks, Settings, GripVertical, PlayCircle } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Save, Server as ServerIcon, KeyRound, ShieldCheck, MoreHorizontal, Loader2, CheckCircle, XCircle, AlertTriangle, ListChecks, Settings, GripVertical, PlayCircle, Terminal } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +45,14 @@ interface TestStepConfig {
   isEnabled: boolean;
   isMandatory: boolean;
   type: 'default' | 'custom';
-  expectedOutputContains?: string; // New field
+  expectedOutputContains?: string;
+}
+
+interface SshExecutionStep {
+  id: string;
+  name: string;
+  command: string;
+  isEnabled: boolean;
 }
 
 interface ServerConfig {
@@ -64,6 +71,7 @@ interface ServerConfig {
   nasSpecificSecrets?: Record<string, string>;
   status?: ServerStatus;
   testSteps: TestStepConfig[];
+  scenarioExecutionSshCommands: SshExecutionStep[];
 }
 
 const getDefaultTestSteps = (): TestStepConfig[] => [
@@ -74,19 +82,24 @@ const getDefaultTestSteps = (): TestStepConfig[] => [
   { id: 'step_service_status', name: 'Check RADIUS Service Status', command: 'systemctl status ${serverType === "freeradius" ? "freeradius" : "radiusd"}', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "active (running)" },
 ];
 
+const getDefaultScenarioSshPreamble = (): SshExecutionStep[] => [
+    { id: 'ssh_preamble_1', name: 'Example: Connect to Jump Host', command: 'ssh user@jump.example.com', isEnabled: false },
+    { id: 'ssh_preamble_2', name: 'Example: SSH to Target from Jump', command: 'ssh admin@${host}', isEnabled: false },
+];
+
 
 const initialServerConfigs: ServerConfig[] = [
   { 
     id: 'srv1', name: 'EU-Prod-FR-01', type: 'freeradius', host: 'radius-eu.example.com', 
     sshPort: 22, sshUser: 'radius-admin', authMethod: 'key', 
     radiusAuthPort: 1812, radiusAcctPort: 1813, defaultSecret: 'secret123', 
-    status: 'unknown', testSteps: getDefaultTestSteps() 
+    status: 'unknown', testSteps: getDefaultTestSteps(), scenarioExecutionSshCommands: getDefaultScenarioSshPreamble()
   },
   { 
     id: 'srv2', name: 'US-Staging-Custom', type: 'custom', host: 'staging-us-radius.example.net', 
     sshPort: 22022, sshUser: 'deploy', authMethod: 'password', 
     radiusAuthPort: 11812, radiusAcctPort: 11813, defaultSecret: 'staging_secret', 
-    status: 'unknown', testSteps: getDefaultTestSteps()
+    status: 'unknown', testSteps: getDefaultTestSteps(), scenarioExecutionSshCommands: getDefaultScenarioSshPreamble()
   },
 ];
 
@@ -136,6 +149,7 @@ export default function ServerConfigPage() {
       nasSpecificSecrets: {},
       status: 'unknown',
       testSteps: getDefaultTestSteps(),
+      scenarioExecutionSshCommands: getDefaultScenarioSshPreamble(),
     });
   };
 
@@ -162,7 +176,6 @@ export default function ServerConfigPage() {
   const handleTestStepChange = (index: number, field: keyof TestStepConfig, value: any) => {
     if (editingConfig) {
       const updatedTestSteps = [...editingConfig.testSteps];
-      // Ensure type safety for boolean fields
       if (field === 'isEnabled' || field === 'isMandatory') {
         (updatedTestSteps[index] as any)[field] = Boolean(value);
       } else {
@@ -193,6 +206,37 @@ export default function ServerConfigPage() {
       setEditingConfig({ ...editingConfig, testSteps: updatedTestSteps });
     }
   };
+
+  const handleSshPreambleStepChange = (index: number, field: keyof SshExecutionStep, value: any) => {
+    if (editingConfig) {
+      const updatedSteps = [...editingConfig.scenarioExecutionSshCommands];
+      if (field === 'isEnabled') {
+        (updatedSteps[index] as any)[field] = Boolean(value);
+      } else {
+        (updatedSteps[index] as any)[field] = value;
+      }
+      setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: updatedSteps });
+    }
+  };
+
+  const addSshPreambleStep = () => {
+    if (editingConfig) {
+      const newStep: SshExecutionStep = {
+        id: `ssh_preamble_custom_${Date.now()}`,
+        name: 'New SSH Preamble Step',
+        command: '',
+        isEnabled: true,
+      };
+      setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: [...editingConfig.scenarioExecutionSshCommands, newStep] });
+    }
+  };
+
+  const removeSshPreambleStep = (index: number) => {
+    if (editingConfig) {
+      const updatedSteps = editingConfig.scenarioExecutionSshCommands.filter((_, i) => i !== index);
+      setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: updatedSteps });
+    }
+  };
   
 
   const handleTestConnection = async (configToTest: ServerConfig) => {
@@ -208,7 +252,7 @@ export default function ServerConfigPage() {
           isEnabled: s.isEnabled,
           isMandatory: s.isMandatory, 
           type: s.type,
-          expectedOutputContains: s.expectedOutputContains || undefined, // Ensure it's passed as undefined if empty
+          expectedOutputContains: s.expectedOutputContains || undefined,
       }));
 
       const input: TestServerConnectionInput = {
@@ -335,7 +379,7 @@ export default function ServerConfigPage() {
                 {editingConfig?.id === 'new' ? 'Add New Server Configuration' : `Edit Server: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Provide connection details and customize the (simulated) test sequence.
+              Provide connection details and customize test sequences. Placeholders like `${"${host}"}` can be used in commands.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
@@ -505,6 +549,57 @@ export default function ServerConfigPage() {
                   </div>
               </fieldset>
 
+              <fieldset className="border p-4 rounded-md">
+                <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
+                  <span>Scenario Execution SSH Preamble (Simulated)</span>
+                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="ml-auto">
+                    <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Step
+                  </Button>
+                </legend>
+                <p className="text-xs text-muted-foreground mt-1 mb-3">
+                  Define SSH commands (e.g., for jump hosts) that would (simulatively) run before RADIUS scenarios. RadiusEdge does NOT execute live SSH.
+                </p>
+                <div className="space-y-3">
+                  {(editingConfig.scenarioExecutionSshCommands || []).map((step, index) => (
+                    <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 flex-grow">
+                          <Terminal className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                          <Input
+                            value={step.name}
+                            onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)}
+                            className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
+                            placeholder="SSH Step Name"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <Switch
+                            id={`ssh-preamble-enabled-${index}`}
+                            checked={step.isEnabled}
+                            onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)}
+                            aria-label="Enable SSH preamble step"
+                          />
+                          <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor={`ssh-preamble-cmd-${index}`} className="text-xs text-muted-foreground">Simulated SSH Command</Label>
+                        <Textarea
+                          id={`ssh-preamble-cmd-${index}`}
+                          value={step.command}
+                          onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)}
+                          rows={1}
+                          className="font-mono text-xs mt-1"
+                          placeholder="e.g., ssh user@jump.server.com"
+                        />
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </fieldset>
+
             </div>
             </ScrollArea>
           )}
@@ -595,4 +690,3 @@ export default function ServerConfigPage() {
     </div>
   );
 }
-
