@@ -10,7 +10,7 @@ import { Bell } from "lucide-react";
 export function AppHeader() {
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b bg-card px-6 shadow-sm">
-      <SidebarTrigger className="md:hidden" />
+      <SidebarTrigger /> {/* Removed md:hidden to make it always visible */}
       <div className="flex flex-1 items-center justify-end gap-4">
         <ServerStatusBadge />
         <Button variant="ghost" size="icon" aria-label="Notifications">

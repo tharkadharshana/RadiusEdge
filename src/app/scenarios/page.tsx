@@ -484,7 +484,7 @@ export default function ScenariosPage() {
     <div className="space-y-8">
       <PageHeader
         title="Scenario Builder"
-        description="Design, manage, and execute complex RADIUS test scenarios. Conditional logic is visual only. API calls are simulated. Step reordering (moving blocks) is not yet implemented."
+        description="Design complex RADIUS test scenarios. Conditional logic is visual only. API calls are simulated. Step reordering (drag & drop) is not yet implemented."
         actions={
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept=".json" />
@@ -576,17 +576,17 @@ export default function ScenariosPage() {
 
       {/* Scenario Editor Dialog */}
       <Dialog open={!!editingScenario} onOpenChange={(isOpen) => !isOpen && handleEditScenario(null)}>
-        <DialogContent className="max-w-4xl min-h-[80vh] flex flex-col overflow-hidden">
+        <DialogContent className="max-w-4xl h-[85vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' || editingScenario?.id.startsWith('imported-') ? 'Create/Edit Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-              Define scenario properties, variables, and steps. Conditional logic is visual only. API calls are simulated. Step reordering (moving blocks) is not yet implemented.
+              Define scenario properties, variables, and steps. Conditional logic is visual only. API calls are simulated. Step reordering (drag & drop) is not yet implemented.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
-            <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden min-h-0"> {/* Added min-h-0 here */}
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 py-4 overflow-hidden min-h-0">
               {/* Left Panel: Scenario Details & Variables */}
-              <ScrollArea className="md:col-span-1 h-full border rounded-md p-4 bg-muted/20 min-h-0"> {/* Added min-h-0 */}
+              <ScrollArea className="md:col-span-1 h-full border rounded-md p-4 bg-muted/20 min-h-0"> 
                 <div className="space-y-4">
                   <Card>
                     <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary"/>Properties</CardTitle></CardHeader>
@@ -638,7 +638,7 @@ export default function ScenariosPage() {
               </ScrollArea>
 
               {/* Right Panel: Scenario Steps */}
-              <div className="md:col-span-2 flex flex-col h-full border rounded-md p-4 bg-muted/20 min-h-0"> {/* Added min-h-0 */}
+              <div className="md:col-span-2 flex flex-col h-full border rounded-md p-4 bg-muted/20 min-h-0 overflow-hidden"> 
                 <div className="flex justify-between items-center mb-2 flex-shrink-0">
                   <h3 className="text-lg font-semibold flex items-center gap-2"><Workflow className="h-5 w-5 text-primary"/>Scenario Steps</h3>
                     <DropdownMenu>
