@@ -11,9 +11,10 @@ const parseJsonField = (jsonString: string | null | undefined, defaultValue: any
   try {
     const parsed = JSON.parse(jsonString);
     // Add basic validation for attribute structure if needed
-    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && 'name' in item && 'code' in item && 'type' in item)) {
+    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
       return parsed as Attribute[];
     }
+    // console.warn('Parsed JSON field for attributes was not an array of valid Attribute objects:', parsed);
     return defaultValue;
   } catch (e) {
     console.error('Failed to parse JSON field for dictionary attributes:', e);
@@ -30,12 +31,26 @@ export async function GET() {
     
     const dictionaries: Dictionary[] = dictionariesFromDb.map(d => {
       const exampleAttrs = parseJsonField(d.exampleAttributes as string | null, []);
+      let validLastUpdated: string;
+      if (d.lastUpdated) {
+        const dateObj = new Date(d.lastUpdated as string);
+        // Check if date is valid
+        if (!isNaN(dateObj.getTime())) {
+          validLastUpdated = dateObj.toISOString();
+        } else {
+          console.warn(`Invalid date string for dictionary ID ${d.id}: ${d.lastUpdated}. Defaulting lastUpdated.`);
+          validLastUpdated = new Date(0).toISOString(); // Default to epoch if invalid
+        }
+      } else {
+        validLastUpdated = new Date(0).toISOString(); // Default to epoch if null/undefined
+      }
+
       return {
         id: d.id as string,
         name: d.name as string,
         source: (d.source as string | null) || 'Unknown',
         isActive: Boolean(d.isActive), 
-        lastUpdated: (d.lastUpdated as string | null) || new Date(0).toISOString(),
+        lastUpdated: validLastUpdated,
         exampleAttributes: exampleAttrs,
         attributes: exampleAttrs.length, 
         vendorCodes: 0, // Placeholder for now
@@ -44,7 +59,7 @@ export async function GET() {
 
     return NextResponse.json(dictionaries);
   } catch (error) {
-    console.error('Failed to fetch dictionaries (API Error):', error);
+    console.error('Failed to fetch dictionaries (API Error):', error instanceof Error ? error.stack : error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred in the API.';
     return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: errorMessage }, { status: 500 });
   }
@@ -95,10 +110,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(returnData, { status: 201 });
   } catch (error) {
-    console.error('Failed to create dictionary metadata:', error);
+    console.error('Failed to create dictionary metadata (API Error):', error instanceof Error ? error.stack : error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return NextResponse.json({ message: 'Failed to create dictionary metadata', error: errorMessage }, { status: 500 });
   }
 }
-
     

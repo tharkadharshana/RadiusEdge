@@ -85,7 +85,8 @@ export default function DictionariesPage() {
         let apiError = `Failed to fetch dictionaries. Status: ${response.status}`;
         try {
           const errorData = await response.json();
-          apiError = errorData.message || errorData.error || apiError;
+          // Prioritize the 'error' field from the backend for more specific messages
+          apiError = errorData.error || errorData.message || apiError; 
         } catch (e) {
           // Response body was not JSON or error during parsing
           const textError = await response.text();
@@ -93,11 +94,11 @@ export default function DictionariesPage() {
         }
         throw new Error(apiError);
       }
-      const data = await response.json();
-      setDictionaries(data.map((d: any) => ({ 
+      const data: Dictionary[] = await response.json();
+      setDictionaries(data.map(d => ({ 
         ...d, 
-        attributes: d.exampleAttributes?.length || 0, 
-        vendorCodes: d.vendorCodes || 0, // Ensure vendorCodes has a default
+        attributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes.length : 0, 
+        vendorCodes: d.vendorCodes || 0,
         exampleAttributes: Array.isArray(d.exampleAttributes) ? d.exampleAttributes : [] 
       })));
     } catch (error) {
@@ -125,11 +126,16 @@ export default function DictionariesPage() {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update dictionary status');
+        throw new Error(errorData.error || errorData.message || 'Failed to update dictionary status');
       }
-      const updatedDict = await response.json();
+      const updatedDict: Dictionary = await response.json();
       // Update with confirmed data from backend
-      setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? { ...updatedDict, attributes: updatedDict.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes } : d));
+      setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? { 
+        ...updatedDict, 
+        attributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes.length : 0, 
+        vendorCodes: d.vendorCodes, // keep original vendorCodes as it's not managed by this op
+        exampleAttributes: Array.isArray(updatedDict.exampleAttributes) ? updatedDict.exampleAttributes : []
+      } : d));
       toast({ title: "Success", description: `Dictionary "${updatedDict.name}" status updated.` });
     } catch (error) {
       console.error("Error toggling dictionary status:", error);
@@ -155,10 +161,15 @@ export default function DictionariesPage() {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to import dictionary');
+        throw new Error(errorData.error || errorData.message || 'Failed to import dictionary');
       }
-      const newDictionary = await response.json();
-      setDictionaries(prev => [ { ...newDictionary, attributes: newDictionary.exampleAttributes?.length || 0, vendorCodes: 0 }, ...prev]);
+      const newDictionary: Dictionary = await response.json();
+      setDictionaries(prev => [ { 
+        ...newDictionary, 
+        attributes: Array.isArray(newDictionary.exampleAttributes) ? newDictionary.exampleAttributes.length : 0, 
+        vendorCodes: 0,
+        exampleAttributes: Array.isArray(newDictionary.exampleAttributes) ? newDictionary.exampleAttributes : []
+      }, ...prev]);
       toast({ title: "Dictionary Imported", description: `Dictionary "${newDictionary.name}" metadata added.` });
       setNewDictName('');
       setNewDictSource('');
@@ -178,7 +189,7 @@ export default function DictionariesPage() {
       const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to delete dictionary');
+        throw new Error(errorData.error || errorData.message || 'Failed to delete dictionary');
       }
       setDictionaries(prev => prev.filter(d => d.id !== id));
       toast({ title: "Dictionary Deleted", description: `Dictionary "${name}" metadata removed.` });
@@ -234,14 +245,20 @@ export default function DictionariesPage() {
       const response = await fetch(`/api/dictionaries/${selectedDictionary.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        // Backend expects exampleAttributes as JSON string or it will parse as array
         body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), 
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to save example attributes');
+        throw new Error(errorData.error || errorData.message || 'Failed to save example attributes');
       }
-      const updatedDictionary = await response.json();
-      setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? { ...updatedDictionary, attributes: updatedDictionary.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes } : d));
+      const updatedDictionary: Dictionary = await response.json();
+      setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? { 
+        ...updatedDictionary, 
+        attributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes.length : 0, 
+        vendorCodes: d.vendorCodes,
+        exampleAttributes: Array.isArray(updatedDictionary.exampleAttributes) ? updatedDictionary.exampleAttributes : []
+      } : d));
       setSelectedDictionary(null); 
       toast({ title: "Attributes Saved", description: `Example attributes for "${updatedDictionary.name}" updated.` });
     } catch (error) {
@@ -481,5 +498,4 @@ export default function DictionariesPage() {
   );
 }
     
-
     

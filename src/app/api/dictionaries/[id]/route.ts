@@ -14,9 +14,10 @@ const parseJsonField = (jsonString: string | null | undefined, defaultValue: any
   try {
     const parsed = JSON.parse(jsonString);
      // Add basic validation for attribute structure if needed
-    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && 'name' in item && 'code' in item && 'type' in item)) {
+    if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'name' in item && 'code' in item && 'type' in item)) {
       return parsed as Attribute[];
     }
+    // console.warn('Parsed JSON field for attributes was not an array of valid Attribute objects:', parsed);
     return defaultValue;
   } catch (e) {
     console.error('Failed to parse JSON field for dictionary attributes:', e);
@@ -35,12 +36,25 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
     }
     
     const exampleAttrs = parseJsonField(dictFromDb.exampleAttributes as string | null);
+    let validLastUpdated: string;
+    if (dictFromDb.lastUpdated) {
+      const dateObj = new Date(dictFromDb.lastUpdated as string);
+      if (!isNaN(dateObj.getTime())) {
+        validLastUpdated = dateObj.toISOString();
+      } else {
+        console.warn(`Invalid date string for dictionary ID ${dictFromDb.id}: ${dictFromDb.lastUpdated}. Defaulting lastUpdated.`);
+        validLastUpdated = new Date(0).toISOString();
+      }
+    } else {
+      validLastUpdated = new Date(0).toISOString();
+    }
+    
     const dictionary: Dictionary = {
       id: dictFromDb.id as string,
       name: dictFromDb.name as string,
       source: (dictFromDb.source as string | null) || 'Unknown',
       isActive: Boolean(dictFromDb.isActive),
-      lastUpdated: (dictFromDb.lastUpdated as string | null) || new Date(0).toISOString(),
+      lastUpdated: validLastUpdated,
       exampleAttributes: exampleAttrs, 
       attributes: exampleAttrs.length, 
       vendorCodes: 0, // Placeholder
@@ -48,7 +62,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
 
     return NextResponse.json(dictionary);
   } catch (error) {
-    console.error(`Failed to fetch dictionary ${params.id} (API Error):`, error);
+    console.error(`Failed to fetch dictionary ${params.id} (API Error):`, error instanceof Error ? error.stack : error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred in the API.';
     return NextResponse.json({ message: `API: Failed to fetch dictionary ${params.id}`, error: errorMessage }, { status: 500 });
   }
@@ -68,7 +82,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const updatedDictData = {
       name: body.name !== undefined ? body.name : existingDict.name,
       source: body.source !== undefined ? body.source : existingDict.source,
-      isActive: typeof body.isActive === 'boolean' ? body.isActive : Boolean(existingDict.isActive),
+      isActive: typeof body.isActive === 'boolean' ? (body.isActive ? 1 : 0) : existingDict.isActive, // Store as 0 or 1
       exampleAttributes: body.exampleAttributes !== undefined 
         ? (typeof body.exampleAttributes === 'string' ? body.exampleAttributes : JSON.stringify(body.exampleAttributes)) 
         : existingDict.exampleAttributes,
@@ -91,12 +105,24 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     }
     
     const exampleAttrsRet = parseJsonField(updatedDictAfterSave.exampleAttributes as string | null);
+    let validLastUpdatedAfterSave: string;
+    if (updatedDictAfterSave.lastUpdated) {
+      const dateObj = new Date(updatedDictAfterSave.lastUpdated as string);
+      if (!isNaN(dateObj.getTime())) {
+        validLastUpdatedAfterSave = dateObj.toISOString();
+      } else {
+        validLastUpdatedAfterSave = new Date(0).toISOString();
+      }
+    } else {
+      validLastUpdatedAfterSave = new Date(0).toISOString();
+    }
+
     const dictionaryToReturn: Dictionary = {
         id: updatedDictAfterSave.id as string,
         name: updatedDictAfterSave.name as string,
         source: (updatedDictAfterSave.source as string | null) || 'Unknown',
         isActive: Boolean(updatedDictAfterSave.isActive),
-        lastUpdated: (updatedDictAfterSave.lastUpdated as string | null) || new Date(0).toISOString(),
+        lastUpdated: validLastUpdatedAfterSave,
         exampleAttributes: exampleAttrsRet,
         attributes: exampleAttrsRet.length,
         vendorCodes: 0, 
@@ -104,7 +130,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
 
     return NextResponse.json(dictionaryToReturn);
   } catch (error) {
-    console.error(`Failed to update dictionary ${params.id}:`, error);
+    console.error(`Failed to update dictionary ${params.id} (API Error):`, error instanceof Error ? error.stack : error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return NextResponse.json({ message: `Failed to update dictionary ${params.id}`, error: errorMessage }, { status: 500 });
   }
@@ -122,10 +148,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
 
     return NextResponse.json({ message: 'Dictionary deleted successfully' }, { status: 200 });
   } catch (error) {
-    console.error(`Failed to delete dictionary ${params.id}:`, error);
+    console.error(`Failed to delete dictionary ${params.id} (API Error):`, error instanceof Error ? error.stack : error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return NextResponse.json({ message: `Failed to delete dictionary ${params.id}`, error: errorMessage }, { status: 500 });
   }
 }
-
     
