@@ -34,11 +34,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 
-type TestStepResult = TestServerConnectionOutput['steps'][0];
+// REAL_IMPLEMENTATION_NOTE: These types should align with your backend/API definitions.
+export type ServerStatus = 'connected' | 'disconnected' | 'unknown' | 'testing' | 'error_ssh' | 'error_config' | 'error_service' | 'issues_found';
 
-type ServerStatus = 'connected' | 'disconnected' | 'unknown' | 'testing' | 'error_ssh' | 'error_config' | 'error_service' | 'issues_found';
-
-interface TestStepConfig {
+export interface TestStepConfig {
   id: string;
   name: string;
   command: string;
@@ -48,7 +47,7 @@ interface TestStepConfig {
   expectedOutputContains?: string;
 }
 
-interface SshExecutionStep {
+export interface SshExecutionStep {
   id: string;
   name: string;
   command: string;
@@ -56,7 +55,7 @@ interface SshExecutionStep {
   expectedOutputContains?: string;
 }
 
-interface ServerConfig {
+export interface ServerConfig {
   id: string;
   name: string;
   type: 'freeradius' | 'custom' | 'other';
@@ -69,8 +68,8 @@ interface ServerConfig {
   radiusAuthPort: number;
   radiusAcctPort: number;
   defaultSecret: string;
-  nasSpecificSecrets?: Record<string, string>;
-  status?: ServerStatus;
+  nasSpecificSecrets: Record<string, string>; // Now correctly typed
+  status: ServerStatus; // Now correctly typed
   testSteps: TestStepConfig[];
   scenarioExecutionSshCommands: SshExecutionStep[];
 }
@@ -84,36 +83,44 @@ const getDefaultTestSteps = (): TestStepConfig[] => [
 ];
 
 const getDefaultScenarioSshPreamble = (): SshExecutionStep[] => [
-    { id: 'ssh_preamble_1', name: 'Example: Connect to Jump Host', command: 'ssh user@jump.example.com', isEnabled: false, expectedOutputContains: "Connected to jump.example.com" },
-    { id: 'ssh_preamble_2', name: 'Example: SSH to Target from Jump', command: 'ssh admin@${host}', isEnabled: false, expectedOutputContains: "Connected to admin@${host}" },
+    { id: `ssh_preamble_${Date.now()}_1`, name: 'Example: Connect to Jump Host', command: 'ssh user@jump.example.com', isEnabled: false, expectedOutputContains: "Connected to jump.example.com" },
+    { id: `ssh_preamble_${Date.now()}_2`, name: 'Example: SSH to Target from Jump', command: 'ssh admin@${host}', isEnabled: false, expectedOutputContains: "Connected to admin@${host}" },
 ];
 
-
-const initialServerConfigs: ServerConfig[] = [
-  { 
-    id: 'srv1', name: 'EU-Prod-FR-01', type: 'freeradius', host: 'radius-eu.example.com', 
-    sshPort: 22, sshUser: 'radius-admin', authMethod: 'key', 
-    radiusAuthPort: 1812, radiusAcctPort: 1813, defaultSecret: 'secret123', 
-    status: 'unknown', testSteps: getDefaultTestSteps(), scenarioExecutionSshCommands: getDefaultScenarioSshPreamble()
-  },
-  { 
-    id: 'srv2', name: 'US-Staging-Custom', type: 'custom', host: 'staging-us-radius.example.net', 
-    sshPort: 22022, sshUser: 'deploy', authMethod: 'password', 
-    radiusAuthPort: 11812, radiusAcctPort: 11813, defaultSecret: 'staging_secret', 
-    status: 'unknown', testSteps: getDefaultTestSteps(), scenarioExecutionSshCommands: getDefaultScenarioSshPreamble()
-  },
-];
 
 export default function ServerConfigPage() {
-  const [configs, setConfigs] = useState<ServerConfig[]>(initialServerConfigs);
+  const [configs, setConfigs] = useState<ServerConfig[]>([]);
   const [editingConfig, setEditingConfig] = useState<ServerConfig | null>(null);
   const [nasSecretKey, setNasSecretKey] = useState('');
   const [nasSecretValue, setNasSecretValue] = useState('');
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [testingServerId, setTestingServerId] = useState<string | null>(null);
   const [testConnectionResult, setTestConnectionResult] = useState<TestServerConnectionOutput | null>(null);
   const [testConnectionError, setTestConnectionError] = useState<string | null>(null);
   const { toast } = useToast();
+
+  const fetchConfigs = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/settings/servers');
+      if (!response.ok) throw new Error('Failed to fetch server configurations');
+      const data: ServerConfig[] = await response.json();
+      setConfigs(data);
+    } catch (error) {
+      console.error("Error fetching server configs:", error);
+      toast({ title: "Error", description: (error as Error).message || "Could not fetch server configurations.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchConfigs();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleEditConfig = (config: ServerConfig | null) => {
     setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null);
@@ -121,21 +128,67 @@ export default function ServerConfigPage() {
     setNasSecretValue('');
   };
 
-  const handleSaveConfig = () => {
-    if (editingConfig) {
-      const configToSave = { ...editingConfig, status: editingConfig.status || 'unknown' };
-      if (editingConfig.id === 'new') {
-        setConfigs(prev => [...prev, { ...configToSave, id: `srv${Date.now()}` }]);
+  const handleSaveConfig = async () => {
+    if (!editingConfig) return;
+    setIsSaving(true);
+
+    const isNew = editingConfig.id === 'new';
+    const url = isNew ? '/api/settings/servers' : `/api/settings/servers/${editingConfig.id}`;
+    const method = isNew ? 'POST' : 'PUT';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingConfig),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to ${isNew ? 'create' : 'update'} server configuration`);
+      }
+      const savedConfig: ServerConfig = await response.json();
+
+      if (isNew) {
+        setConfigs(prev => [savedConfig, ...prev]);
       } else {
-        setConfigs(prev => prev.map(c => c.id === editingConfig.id ? configToSave : c));
+        setConfigs(prev => prev.map(c => c.id === savedConfig.id ? savedConfig : c));
       }
       handleEditConfig(null);
+      toast({ title: "Success", description: `Server configuration "${savedConfig.name}" ${isNew ? 'created' : 'updated'} successfully.` });
+    } catch (error) {
+      console.error("Error saving server config:", error);
+      toast({ title: "Error", description: (error as Error).message || "Could not save server configuration.", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
     }
   };
 
+  const handleDeleteConfig = async (configId: string) => {
+    if (!window.confirm("Are you sure you want to delete this server configuration?")) return;
+    
+    // Consider adding a specific isDeleting state if needed for UI feedback
+    setIsLoading(true); // Re-use isLoading or add isDeleting
+    try {
+      const response = await fetch(`/api/settings/servers/${configId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to delete server configuration');
+      }
+      setConfigs(prev => prev.filter(c => c.id !== configId));
+      toast({ title: "Success", description: "Server configuration deleted successfully." });
+    } catch (error) {
+      console.error("Error deleting server config:", error);
+      toast({ title: "Error", description: (error as Error).message || "Could not delete server configuration.", variant: "destructive" });
+    } finally {
+      setIsLoading(false); // Re-use isLoading or add isDeleting
+    }
+  };
+
+
   const createNewConfig = () => {
     handleEditConfig({
-      id: 'new',
+      id: 'new', // Temporary ID
       name: 'New Server Config',
       type: 'freeradius',
       host: '',
@@ -240,12 +293,12 @@ export default function ServerConfigPage() {
     }
   };
   
-
   const handleTestConnection = async (configToTest: ServerConfig) => {
     setTestingServerId(configToTest.id);
     setTestConnectionResult(null);
     setTestConnectionError(null);
-    setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'testing' } : c));
+    // Optimistically set status to 'testing' in local state
+    setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'testing' as ServerStatus } : c));
 
     try {
       const stepsToExecuteClient: ClientTestStep[] = configToTest.testSteps.map(s => ({ 
@@ -283,26 +336,42 @@ export default function ServerConfigPage() {
         }
       } else if (result.overallStatus === 'partial') newStatus = 'issues_found';
       
-      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: newStatus } : c));
-      toast({ title: "Connection Test Complete", description: `Test for ${configToTest.name} finished with status: ${result.overallStatus}.` });
+      // Update the config with the new status and save it to backend
+      const updatedConfigForSave = { ...configToTest, status: newStatus };
+      const response = await fetch(`/api/settings/servers/${configToTest.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedConfigForSave),
+      });
+
+      if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Failed to update server status after test');
+      }
+      const savedConfigWithStatus: ServerConfig = await response.json();
+      setConfigs(prev => prev.map(c => c.id === savedConfigWithStatus.id ? savedConfigWithStatus : c));
+      toast({ title: "Connection Test Complete", description: `Test for ${configToTest.name} finished. Status: ${newStatus.replace('_', ' ')}.` });
 
     } catch (error) {
-      console.error("Error testing connection:", error);
+      console.error("Error testing connection or saving status:", error);
       setTestConnectionError(error instanceof Error ? error.message : "An unknown error occurred during the test.");
-      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'unknown' } : c));
-      toast({ title: "Connection Test Failed", description: "Could not run the connection test.", variant: "destructive" });
+      // Revert status to unknown or previous status on error
+      setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: configToTest.status || 'unknown' } : c));
+      toast({ title: "Connection Test Failed", description: (error as Error).message || "Could not run the connection test or save status.", variant: "destructive" });
+    } finally {
+        // No longer setting testingDbId to null here, result dialog handles its own visibility
     }
   };
 
   const getStatusBadge = (status?: ServerStatus) => {
     switch (status) {
-      case 'connected': return <Badge variant="default" className="bg-green-100 text-green-700 border-green-300 dark:bg-green-700/30 dark:text-green-300 dark:border-green-600">Connected</Badge>;
+      case 'connected': return <Badge className="bg-green-100 text-green-700 border-green-300 dark:bg-green-700/30 dark:text-green-300 dark:border-green-600">Connected</Badge>;
       case 'disconnected': return <Badge variant="destructive">Disconnected</Badge>;
       case 'testing': return <Badge variant="outline" className="text-blue-600 border-blue-400 dark:text-blue-400 dark:border-blue-500"><Loader2 className="mr-1 h-3 w-3 animate-spin" />Testing...</Badge>;
       case 'error_ssh': return <Badge variant="destructive" className="bg-red-100 text-red-700 border-red-300 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">SSH Error</Badge>;
       case 'error_config': return <Badge variant="destructive" className="bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-700/30 dark:text-orange-300 dark:border-orange-600">Config Error</Badge>;
       case 'error_service': return <Badge variant="destructive" className="bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Service Error</Badge>;
-      case 'issues_found': return <Badge variant="secondary" className="bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Issues Found</Badge>;
+      case 'issues_found': return <Badge className="bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Issues Found</Badge>;
       case 'unknown':
       default: return <Badge variant="outline">Unknown</Badge>;
     }
@@ -315,7 +384,7 @@ export default function ServerConfigPage() {
         title="Server Configuration"
         description="Manage connections to your RADIUS servers for testing."
         actions={
-          <Button onClick={createNewConfig}>
+          <Button onClick={createNewConfig} disabled={isLoading || isSaving}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add Server
           </Button>
         }
@@ -326,6 +395,12 @@ export default function ServerConfigPage() {
           <CardTitle>Configured Servers</CardTitle>
         </CardHeader>
         <CardContent>
+          {isLoading && !configs.length ? (
+             <div className="flex justify-center items-center h-40">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-2 text-muted-foreground">Loading server configurations...</p>
+            </div>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -346,20 +421,20 @@ export default function ServerConfigPage() {
                   <TableCell className="text-right">
                      <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={testingServerId === config.id}>
+                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={testingServerId === config.id || isSaving}>
                           <span className="sr-only">Open menu</span>
                           {testingServerId === config.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEditConfig(config)} disabled={!!testingServerId}>
+                        <DropdownMenuItem onClick={() => handleEditConfig(config)} disabled={!!testingServerId || isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleTestConnection(config)} disabled={!!testingServerId}>
+                        <DropdownMenuItem onClick={() => handleTestConnection(config)} disabled={!!testingServerId || isSaving}>
                           <PlayCircle className="mr-2 h-4 w-4" /> Test Connection
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!testingServerId}>
+                        <DropdownMenuItem onClick={() => handleDeleteConfig(config.id)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!testingServerId || isSaving}>
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -367,8 +442,16 @@ export default function ServerConfigPage() {
                   </TableCell>
                 </TableRow>
               ))}
+               {!isLoading && configs.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                    No server configurations found. Click "Add Server" to create one.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
+          )}
         </CardContent>
       </Card>
 
@@ -390,11 +473,11 @@ export default function ServerConfigPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="server-name">Configuration Name</Label>
-                  <Input id="server-name" value={editingConfig.name} onChange={(e) => setEditingConfig({ ...editingConfig, name: e.target.value })} placeholder="e.g., EU-Prod-FR-01" />
+                  <Input id="server-name" value={editingConfig.name} onChange={(e) => setEditingConfig({ ...editingConfig, name: e.target.value })} placeholder="e.g., EU-Prod-FR-01" disabled={isSaving} />
                 </div>
                 <div>
                   <Label htmlFor="server-type">Server Type</Label>
-                  <Select value={editingConfig.type} onValueChange={(value) => setEditingConfig({ ...editingConfig, type: value as ServerConfig['type'] })}>
+                  <Select value={editingConfig.type} onValueChange={(value) => setEditingConfig({ ...editingConfig, type: value as ServerConfig['type'] })} disabled={isSaving}>
                     <SelectTrigger id="server-type"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="freeradius">FreeRADIUS</SelectItem>
@@ -407,7 +490,7 @@ export default function ServerConfigPage() {
               
               <div>
                 <Label htmlFor="server-host">Hostname or IP Address (for RADIUS client)</Label>
-                <Input id="server-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="radius.example.com" />
+                <Input id="server-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="radius.example.com" disabled={isSaving} />
               </div>
 
               <fieldset className="border p-4 rounded-md">
@@ -415,15 +498,15 @@ export default function ServerConfigPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="ssh-port">SSH Port</Label>
-                        <Input id="ssh-port" type="number" value={editingConfig.sshPort} onChange={(e) => setEditingConfig({ ...editingConfig, sshPort: parseInt(e.target.value) || 22 })} />
+                        <Input id="ssh-port" type="number" value={editingConfig.sshPort} onChange={(e) => setEditingConfig({ ...editingConfig, sshPort: parseInt(e.target.value) || 22 })} disabled={isSaving} />
                     </div>
                     <div>
                         <Label htmlFor="ssh-user">SSH Username</Label>
-                        <Input id="ssh-user" value={editingConfig.sshUser} onChange={(e) => setEditingConfig({ ...editingConfig, sshUser: e.target.value })} />
+                        <Input id="ssh-user" value={editingConfig.sshUser} onChange={(e) => setEditingConfig({ ...editingConfig, sshUser: e.target.value })} disabled={isSaving} />
                     </div>
                      <div>
                         <Label htmlFor="auth-method">Authentication Method</Label>
-                        <Select value={editingConfig.authMethod} onValueChange={(value) => setEditingConfig({ ...editingConfig, authMethod: value as ServerConfig['authMethod'] })}>
+                        <Select value={editingConfig.authMethod} onValueChange={(value) => setEditingConfig({ ...editingConfig, authMethod: value as ServerConfig['authMethod'] })} disabled={isSaving}>
                             <SelectTrigger id="auth-method"><SelectValue /></SelectTrigger>
                             <SelectContent>
                             <SelectItem value="key">SSH Key</SelectItem>
@@ -434,12 +517,12 @@ export default function ServerConfigPage() {
                     {editingConfig.authMethod === 'key' ? (
                         <div className="md:col-span-2">
                             <Label htmlFor="ssh-key">SSH Private Key</Label>
-                            <Textarea id="ssh-key" value={editingConfig.privateKey || ''} onChange={(e) => setEditingConfig({...editingConfig, privateKey: e.target.value})} placeholder="Paste your private key here" rows={3}/>
+                            <Textarea id="ssh-key" value={editingConfig.privateKey || ''} onChange={(e) => setEditingConfig({...editingConfig, privateKey: e.target.value})} placeholder="Paste your private key here" rows={3} disabled={isSaving}/>
                         </div>
                     ) : (
                          <div>
                             <Label htmlFor="ssh-password">SSH Password</Label>
-                            <Input id="ssh-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter SSH password"/>
+                            <Input id="ssh-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter SSH password" disabled={isSaving}/>
                         </div>
                     )}
                 </div>
@@ -450,6 +533,7 @@ export default function ServerConfigPage() {
                   <p className="text-xs text-muted-foreground mt-1 mb-3">
                     Define SSH commands (e.g., for jump hosts) that would run before RADIUS scenarios. 
                     If 'Expected Output Contains' is set, the step must produce that output for the preamble to continue.
+                    These are for defining sequences; RadiusEdge does NOT perform live SSH.
                   </p>
                   <div className="space-y-3">
                     {(editingConfig.scenarioExecutionSshCommands || []).map((step, index) => (
@@ -462,6 +546,7 @@ export default function ServerConfigPage() {
                               onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)}
                               className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
                               placeholder="SSH Step Name"
+                              disabled={isSaving}
                             />
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
@@ -470,8 +555,9 @@ export default function ServerConfigPage() {
                               checked={step.isEnabled}
                               onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)}
                               aria-label="Enable SSH preamble step"
+                              disabled={isSaving}
                             />
-                            <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7">
+                            <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
@@ -485,6 +571,7 @@ export default function ServerConfigPage() {
                             rows={1}
                             className="font-mono text-xs mt-1"
                             placeholder="e.g., ssh user@jump.server.com"
+                            disabled={isSaving}
                           />
                         </div>
                         <div className="mt-2">
@@ -495,11 +582,12 @@ export default function ServerConfigPage() {
                                 onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)}
                                 className="font-mono text-xs mt-1"
                                 placeholder="e.g., 'Connection established' or 'Login successful'"
+                                disabled={isSaving}
                             />
                         </div>
                       </Card>
                     ))}
-                     <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="mt-2 w-full">
+                     <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="mt-2 w-full" disabled={isSaving}>
                       <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Preamble Step
                     </Button>
                   </div>
@@ -511,16 +599,16 @@ export default function ServerConfigPage() {
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="radius-auth-port">RADIUS Auth Port</Label>
-                        <Input id="radius-auth-port" type="number" value={editingConfig.radiusAuthPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAuthPort: parseInt(e.target.value) || 1812 })} />
+                        <Input id="radius-auth-port" type="number" value={editingConfig.radiusAuthPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAuthPort: parseInt(e.target.value) || 1812 })} disabled={isSaving} />
                     </div>
                     <div>
                         <Label htmlFor="radius-acct-port">RADIUS Acct Port</Label>
-                        <Input id="radius-acct-port" type="number" value={editingConfig.radiusAcctPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAcctPort: parseInt(e.target.value) || 1813 })} />
+                        <Input id="radius-acct-port" type="number" value={editingConfig.radiusAcctPort} onChange={(e) => setEditingConfig({ ...editingConfig, radiusAcctPort: parseInt(e.target.value) || 1813 })} disabled={isSaving} />
                     </div>
                 </div>
                 <div className="mt-4">
                     <Label htmlFor="default-secret">Default Shared Secret</Label>
-                    <Input id="default-secret" type="password" value={editingConfig.defaultSecret} onChange={(e) => setEditingConfig({ ...editingConfig, defaultSecret: e.target.value })} />
+                    <Input id="default-secret" type="password" value={editingConfig.defaultSecret} onChange={(e) => setEditingConfig({ ...editingConfig, defaultSecret: e.target.value })} disabled={isSaving} />
                 </div>
               </fieldset>
               
@@ -531,15 +619,15 @@ export default function ServerConfigPage() {
                         <div key={key} className="flex items-center gap-2">
                             <Input value={key} readOnly className="font-mono"/>
                             <Input type="password" value={value} readOnly className="font-mono"/>
-                            <Button variant="ghost" size="icon" onClick={() => handleNasSecretChange(key, '', 'remove')} className="text-destructive h-8 w-8">
+                            <Button variant="ghost" size="icon" onClick={() => handleNasSecretChange(key, '', 'remove')} className="text-destructive h-8 w-8" disabled={isSaving}>
                                 <Trash2 className="h-4 w-4"/>
                             </Button>
                         </div>
                     ))}
                      <div className="flex items-end gap-2 pt-2">
-                        <div className="flex-1"><Label htmlFor="nas-key" className="text-xs">NAS Identifier (IP/Name)</Label><Input id="nas-key" value={nasSecretKey} onChange={(e) => setNasSecretKey(e.target.value)} placeholder="e.g., 10.0.0.1 or nas-01"/></div>
-                        <div className="flex-1"><Label htmlFor="nas-value" className="text-xs">Secret</Label><Input id="nas-value" type="text" value={nasSecretValue} onChange={(e) => setNasSecretValue(e.target.value)} placeholder="Secret for this NAS"/></div>
-                        <Button onClick={addNasSecretEntry} size="sm"><PlusCircle className="h-4 w-4"/></Button>
+                        <div className="flex-1"><Label htmlFor="nas-key" className="text-xs">NAS Identifier (IP/Name)</Label><Input id="nas-key" value={nasSecretKey} onChange={(e) => setNasSecretKey(e.target.value)} placeholder="e.g., 10.0.0.1 or nas-01" disabled={isSaving}/></div>
+                        <div className="flex-1"><Label htmlFor="nas-value" className="text-xs">Secret</Label><Input id="nas-value" type="text" value={nasSecretValue} onChange={(e) => setNasSecretValue(e.target.value)} placeholder="Secret for this NAS" disabled={isSaving}/></div>
+                        <Button onClick={addNasSecretEntry} size="sm" disabled={isSaving}><PlusCircle className="h-4 w-4"/></Button>
                     </div>
                 </div>
               </fieldset>
@@ -547,7 +635,7 @@ export default function ServerConfigPage() {
               <fieldset className="border p-4 rounded-md">
                   <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
                     <span>Connection Test Sequence</span>
-                    <Button variant="outline" size="sm" onClick={addCustomTestStep} className="ml-auto">
+                    <Button variant="outline" size="sm" onClick={addCustomTestStep} className="ml-auto" disabled={isSaving}>
                         <PlusCircle className="mr-2 h-4 w-4" /> Add Custom Step
                     </Button>
                   </legend>
@@ -562,6 +650,7 @@ export default function ServerConfigPage() {
                                         onChange={(e) => handleTestStepChange(index, 'name', e.target.value)} 
                                         className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
                                         placeholder="Step Name"
+                                        disabled={isSaving}
                                     />
                                 </div>
                                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -570,11 +659,11 @@ export default function ServerConfigPage() {
                                         id={`step-enabled-${index}`}
                                         checked={step.isEnabled} 
                                         onCheckedChange={(checked) => handleTestStepChange(index, 'isEnabled', checked)}
-                                        disabled={step.isMandatory}
+                                        disabled={step.isMandatory || isSaving}
                                         aria-label="Enable step"
                                     />
                                     {!step.isMandatory && (
-                                        <Button variant="ghost" size="icon" onClick={() => removeTestStep(index)} className="text-destructive hover:text-destructive h-7 w-7">
+                                        <Button variant="ghost" size="icon" onClick={() => removeTestStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}>
                                             <Trash2 className="h-4 w-4" />
                                         </Button>
                                     )}
@@ -589,6 +678,7 @@ export default function ServerConfigPage() {
                                     rows={1} 
                                     className="font-mono text-xs mt-1"
                                     placeholder="e.g., which radclient"
+                                    disabled={isSaving}
                                 />
                             </div>
                              <div className="mt-2">
@@ -599,9 +689,10 @@ export default function ServerConfigPage() {
                                     onChange={(e) => handleTestStepChange(index, 'expectedOutputContains', e.target.value)}
                                     className="font-mono text-xs mt-1"
                                     placeholder="e.g., 'active (running)' or '/usr/bin/radclient'"
+                                    disabled={isSaving}
                                 />
                                 <p className="text-xs text-muted-foreground mt-1">
-                                    If provided, step succeeds if output includes this text. Otherwise, AI decides.
+                                    If provided, (simulated) step succeeds if output includes this text.
                                 </p>
                             </div>
                             <p className="text-xs text-muted-foreground mt-2">
@@ -616,8 +707,11 @@ export default function ServerConfigPage() {
             </ScrollArea>
           )}
           <DialogFooter>
-            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSaveConfig}><Save className="mr-2 h-4 w-4" /> Save Configuration</Button>
+            <DialogClose asChild><Button variant="outline" disabled={isSaving}>Cancel</Button></DialogClose>
+            <Button onClick={handleSaveConfig} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Save Configuration
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -625,7 +719,7 @@ export default function ServerConfigPage() {
       {/* Test Connection Result Dialog */}
       <Dialog open={!!(testingServerId && (testConnectionResult || testConnectionError))} onOpenChange={(isOpen) => {
         if (!isOpen) {
-          setTestingServerId(null);
+          setTestingServerId(null); // Clear the testing ID when dialog is closed
           setTestConnectionResult(null);
           setTestConnectionError(null);
         }
@@ -701,3 +795,5 @@ export default function ServerConfigPage() {
     </div>
   );
 }
+
+    
