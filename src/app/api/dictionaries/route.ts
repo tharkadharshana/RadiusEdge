@@ -70,7 +70,7 @@ export async function GET() {
     return NextResponse.json(dictionaries);
   } catch (error: any) {
     console.error('API: Failed to fetch dictionaries (GET all). Error:', error.message, error.stack);
-    return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: error.message }, { status: 500 });
+    return NextResponse.json({ message: 'API: Failed to fetch dictionaries', error: error.message, error: error.stack }, { status: 500 });
   }
 }
 
@@ -134,8 +134,7 @@ export async function POST(request: NextRequest) {
             name: attr.name, code: attr.code, type: attr.type,
             vendor: parsedResult.vendorName || attr.vendor || 'Unknown',
             description: attr.description || '',
-            // enumValues: attr.enumValues || [], // Ensure enums are handled correctly if present in ParsedAttribute
-            enumValues: attr.enumValues?.map(ev => ev.name + ' (' + ev.value + ')') || [], // Example: combine name and value
+            enumValues: attr.enumValues?.map(ev => ev.name + ' (' + ev.value + ')') || [],
             examples: attr.examples || '',
           }));
         }
@@ -176,7 +175,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('API: Failed to create dictionary metadata (POST). Error:', error.message, error.stack);
-    return NextResponse.json({ message: 'Failed to create dictionary metadata', error: error.message }, { status: 500 });
+    return NextResponse.json({ message: 'Failed to create dictionary metadata', error: error.message, errorDetails: error.stack }, { status: 500 });
   }
 }
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
