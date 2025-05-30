@@ -9,23 +9,11 @@ import {
   ListTree,
   FilePenLine,
   BookText,
-  UploadCloud,
   BarChart3,
   TerminalSquare,
   Settings,
   Server,
-  GitFork,
-  Moon,
-  Sun,
-  PackageSearch,
-  FlaskConical,
-  FileText,
   Waypoints,
-  History,
-  Network,
-  ShieldCheck,
-  CircleHelp,
-  Briefcase,
   DatabaseZap,
   Users,
 } from "lucide-react";
@@ -40,12 +28,10 @@ import {
   SidebarMenuButton,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Logo } from "./logo";
-import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "./theme-toggle"; // Example: if you want theme toggle also in sidebar footer for collapsed view
+import { ThemeToggle } from "./theme-toggle"; 
 
 interface NavItem {
   href: string;
@@ -61,7 +47,7 @@ const navItems: NavItem[] = [
   { href: "/scenarios", label: "Scenario Builder", icon: Waypoints },
   { href: "/packets", label: "Packet Editor", icon: FilePenLine },
   { href: "/dictionaries", label: "Dictionaries", icon: BookText },
-  { href: "/import", label: "Packet Importer", icon: UploadCloud },
+  // { href: "/import", label: "Packet Importer", icon: UploadCloud }, // Removed
   { href: "/results", label: "Results Dashboard", icon: BarChart3 },
   { href: "/execute", label: "Execution Console", icon: TerminalSquare },
   {
