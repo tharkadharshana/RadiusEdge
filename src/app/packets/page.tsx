@@ -396,7 +396,7 @@ export default function PacketsPage() {
                   className="w-full"
                 >
                   {isParsingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
-                  Parse from Text &amp; Add/Replace
+                  Parse from Text & Add/Replace
                 </Button>
               </div>
 
