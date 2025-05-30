@@ -168,6 +168,19 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
   `);
   console.log('Execution Logs table checked/created.');
 
+  // AI Interactions Table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_interactions (
+      id TEXT PRIMARY KEY,
+      interactionType TEXT NOT NULL, -- 'generate_packet', 'explain_attribute'
+      userInput TEXT,                -- JSON string of the input given to the AI
+      aiOutput TEXT,                 -- JSON string of the output received from the AI
+      timestamp TEXT NOT NULL        -- ISO8601 string
+    );
+  `);
+  console.log('AI Interactions table checked/created.');
+
+
   console.log('Database schema initialization complete.');
 }
 
