@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react'; // Added useEffect
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,7 +17,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
@@ -35,10 +34,10 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { testDbValidation, TestDbValidationInput, TestDbValidationOutput, DbValidationStepClient } from '@/ai/flows/test-db-validation-flow';
 
+// Type definitions (ensure these match your backend expectations if they differ)
+export type DbStatus = 'connected_validated' | 'connected_issues' | 'connection_error' | 'validation_error' | 'unknown' | 'testing';
 
-type DbStatus = 'connected_validated' | 'connected_issues' | 'connection_error' | 'validation_error' | 'unknown' | 'testing';
-
-interface DbSshPreambleStepConfig { 
+export interface DbSshPreambleStepConfig { 
   id: string;
   name: string;
   command: string;
@@ -46,7 +45,7 @@ interface DbSshPreambleStepConfig {
   expectedOutputContains?: string;
 }
 
-interface DbValidationStepConfig {
+export interface DbValidationStepConfig {
   id: string;
   name: string;
   type: 'sql' | 'ssh';
@@ -56,7 +55,7 @@ interface DbValidationStepConfig {
   expectedOutputContains?: string;
 }
 
-interface DbConnectionConfig {
+export interface DbConnectionConfig {
   id: string;
   name: string;
   type: 'mysql' | 'postgresql' | 'mssql' | 'sqlite';
@@ -70,52 +69,107 @@ interface DbConnectionConfig {
   validationSteps: DbValidationStepConfig[];
 }
 
+// Default creation functions remain the same
 const getDefaultDbSshPreamble = (): DbSshPreambleStepConfig[] => [
-    { id: 'db_ssh_pre_1', name: 'Connect to DB Bastion', command: 'ssh user@db-bastion.example.com', isEnabled: false, expectedOutputContains: "Connected to db-bastion" },
+    { id: `db_ssh_pre_${Date.now()}`, name: 'Example: Connect to DB Bastion', command: 'ssh user@db-bastion.example.com', isEnabled: false, expectedOutputContains: "Connected to db-bastion" },
 ];
 
 const getDefaultDbValidationSteps = (): DbValidationStepConfig[] => [
-  { id: 'db_val_1', name: 'Check Users Table Exists', type: 'sql', commandOrQuery: "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'users_example';", isEnabled: true, isMandatory: true, expectedOutputContains: "1" },
-  { id: 'db_val_2', name: 'Basic Select from Users', type: 'sql', commandOrQuery: "SELECT 1 FROM users_example LIMIT 1;", isEnabled: true, isMandatory: false, expectedOutputContains: "1" },
+  { id: `db_val_default_${Date.now()}_1`, name: 'Check Users Table Exists', type: 'sql', commandOrQuery: "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'users_example';", isEnabled: true, isMandatory: true, expectedOutputContains: "1" },
+  { id: `db_val_default_${Date.now()}_2`, name: 'Basic Select from Users', type: 'sql', commandOrQuery: "SELECT 1 FROM users_example LIMIT 1;", isEnabled: true, isMandatory: false, expectedOutputContains: "1" },
 ];
 
-
-const initialDbConfigs: DbConnectionConfig[] = [
-  { 
-    id: 'db1', name: 'Primary User DB', type: 'mysql', host: 'db.example.com', port: 3306, username: 'radius_validator', databaseName: 'radius_users', status: 'unknown',
-    sshPreambleSteps: getDefaultDbSshPreamble(),
-    validationSteps: getDefaultDbValidationSteps(),
-  },
-  { 
-    id: 'db2', name: 'Session Store (Postgres)', type: 'postgresql', host: 'pg.example.com', port: 5432, username: 'session_checker', databaseName: 'active_sessions', status: 'unknown',
-    sshPreambleSteps: [], 
-    validationSteps: getDefaultDbValidationSteps(),
-  },
-];
 
 export default function DatabaseValidationPage() {
-  const [configs, setConfigs] = useState<DbConnectionConfig[]>(initialDbConfigs);
+  const [configs, setConfigs] = useState<DbConnectionConfig[]>([]);
   const [editingConfig, setEditingConfig] = useState<DbConnectionConfig | null>(null);
   
+  const [isLoading, setIsLoading] = useState(true); // For initial load
+  const [isSaving, setIsSaving] = useState(false); // For save operations
+
   const [testingDbId, setTestingDbId] = useState<string | null>(null);
   const [testDbResult, setTestDbResult] = useState<TestDbValidationOutput | null>(null);
   const [testDbError, setTestDbError] = useState<string | null>(null);
   const { toast } = useToast();
 
+  const fetchDbConfigs = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/settings/database');
+      if (!response.ok) {
+        throw new Error('Failed to fetch database configurations');
+      }
+      const data = await response.json();
+      setConfigs(data);
+    } catch (error) {
+      console.error("Error fetching DB configs:", error);
+      toast({ title: "Error", description: "Could not fetch database configurations.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDbConfigs();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleEditConfig = (config: DbConnectionConfig | null) => {
     setEditingConfig(config ? JSON.parse(JSON.stringify(config)) : null); 
   };
 
-  const handleSaveConfig = () => {
-    if (editingConfig) {
-      const configToSave = { ...editingConfig, status: editingConfig.status || 'unknown' };
-      if (editingConfig.id === 'new') {
-        setConfigs(prev => [...prev, { ...configToSave, id: `db${Date.now()}` }]);
+  const handleSaveConfig = async () => {
+    if (!editingConfig) return;
+    setIsSaving(true);
+    const isNew = editingConfig.id === 'new';
+    const url = isNew ? '/api/settings/database' : `/api/settings/database/${editingConfig.id}`;
+    const method = isNew ? 'POST' : 'PUT';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingConfig),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to ${isNew ? 'create' : 'update'} database configuration`);
+      }
+      const savedConfig = await response.json();
+
+      if (isNew) {
+        setConfigs(prev => [savedConfig, ...prev.filter(c => c.id !== 'new')]);
       } else {
-        setConfigs(prev => prev.map(c => c.id === editingConfig.id ? configToSave : c));
+        setConfigs(prev => prev.map(c => c.id === savedConfig.id ? savedConfig : c));
       }
       handleEditConfig(null);
+      toast({ title: "Success", description: `Database configuration "${savedConfig.name}" saved.` });
+    } catch (error: any) {
+      console.error("Error saving DB config:", error);
+      toast({ title: "Save Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteConfig = async (configId: string) => {
+    if (!window.confirm("Are you sure you want to delete this database configuration?")) return;
+    setIsLoading(true); // Can use a more specific deleting state if needed
+
+    try {
+      const response = await fetch(`/api/settings/database/${configId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to delete database configuration');
+      }
+      setConfigs(prev => prev.filter(c => c.id !== configId));
+      toast({ title: "Success", description: "Database configuration deleted." });
+    } catch (error: any) {
+      console.error("Error deleting DB config:", error);
+      toast({ title: "Delete Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -135,6 +189,7 @@ export default function DatabaseValidationPage() {
     });
   };
 
+  // SshPreambleStep and ValidationStep change handlers remain the same
   const handleSshPreambleStepChange = (index: number, field: keyof DbSshPreambleStepConfig, value: any) => {
     if (editingConfig) {
       const updatedSteps = [...editingConfig.sshPreambleSteps];
@@ -169,8 +224,8 @@ export default function DatabaseValidationPage() {
         (updatedSteps[index] as any)[field] = Boolean(value);
       } else if (field === 'type') {
          (updatedSteps[index] as any)[field] = value;
-         updatedSteps[index].commandOrQuery = "";
-         updatedSteps[index].expectedOutputContains = "";
+         updatedSteps[index].commandOrQuery = ""; // Reset command/query on type change
+         updatedSteps[index].expectedOutputContains = ""; // Reset expected output on type change
       }
       else {
         (updatedSteps[index] as any)[field] = value;
@@ -199,6 +254,7 @@ export default function DatabaseValidationPage() {
       setEditingConfig({ ...editingConfig, validationSteps: editingConfig.validationSteps.filter((_, i) => i !== index) });
     }
   };
+
 
   const handleTestDb = async (configToTest: DbConnectionConfig) => {
     setTestingDbId(configToTest.id);
@@ -230,14 +286,28 @@ export default function DatabaseValidationPage() {
         else if (result.overallStatus === 'connection_failure') newStatus = 'connection_error';
         else if (result.overallStatus === 'validation_failure') newStatus = 'validation_error';
         
-        setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: newStatus } : c));
-        toast({ title: "DB Test Complete", description: `Test for ${configToTest.name} finished with status: ${result.overallStatus}.` });
+        // Update the config with the new status and save it to backend
+        const updatedConfigForSave = { ...configToTest, status: newStatus };
+        const response = await fetch(`/api/settings/database/${configToTest.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedConfigForSave),
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to update DB config status after test');
+        }
+        const savedConfigWithStatus = await response.json();
+        setConfigs(prev => prev.map(c => c.id === savedConfigWithStatus.id ? savedConfigWithStatus : c));
+        toast({ title: "DB Test Complete", description: `Test for ${configToTest.name} finished. Status: ${newStatus.replace(/_/g, ' ')}.` });
 
     } catch (error) {
-        console.error("Error testing DB connection/validation:", error);
+        console.error("Error testing DB connection/validation or saving:", error);
         setTestDbError(error instanceof Error ? error.message : "An unknown error occurred during the DB test.");
-        setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'unknown' } : c));
-        toast({ title: "DB Test Failed", description: "Could not run the DB connection/validation test.", variant: "destructive" });
+        setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: configToTest.status || 'unknown' } : c)); // Revert to original or unknown
+        toast({ title: "DB Test Failed", description: (error as Error).message || "Could not run the DB connection/validation test.", variant: "destructive" });
+    } finally {
+        // No longer setting testingDbId to null here, result dialog handles its own visibility
     }
   };
 
@@ -257,9 +327,9 @@ export default function DatabaseValidationPage() {
     <div className="space-y-8">
       <PageHeader
         title="Database Validation Setup"
-        description="Configure DB connections for result validation. Scenario SSH preambles defined here are for scenario execution."
+        description="Configure DB connections for result validation. Scenario SSH preambles are for scenario execution."
         actions={
-          <Button onClick={createNewConfig}>
+          <Button onClick={createNewConfig} disabled={isLoading || isSaving}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add DB Connection
           </Button>
         }
@@ -270,6 +340,12 @@ export default function DatabaseValidationPage() {
           <CardTitle>Configured Database Connections</CardTitle>
         </CardHeader>
         <CardContent>
+          {isLoading && !configs.length ? (
+            <div className="flex justify-center items-center h-40">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-2 text-muted-foreground">Loading database configurations...</p>
+            </div>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -292,19 +368,19 @@ export default function DatabaseValidationPage() {
                   <TableCell className="text-right">
                      <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={testingDbId === config.id}>
+                        <Button variant="ghost" className="h-8 w-8 p-0" disabled={testingDbId === config.id || isSaving}>
                            {testingDbId === config.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEditConfig(config)} disabled={!!testingDbId}>
+                        <DropdownMenuItem onClick={() => handleEditConfig(config)} disabled={!!testingDbId || isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleTestDb(config)} disabled={!!testingDbId}>
+                        <DropdownMenuItem onClick={() => handleTestDb(config)} disabled={!!testingDbId || isSaving}>
                           <TestTube2 className="mr-2 h-4 w-4" /> Test Connection & Validation
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!testingDbId}>
+                        <DropdownMenuItem onClick={() => handleDeleteConfig(config.id)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!testingDbId || isSaving}>
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -312,8 +388,16 @@ export default function DatabaseValidationPage() {
                   </TableCell>
                 </TableRow>
               ))}
+              {!isLoading && configs.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                    No database configurations found. Click "Add DB Connection" to create one.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
+          )}
         </CardContent>
       </Card>
 
@@ -326,7 +410,7 @@ export default function DatabaseValidationPage() {
                 {editingConfig?.id === 'new' ? 'Add New Database Connection' : `Edit Connection: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Configure DB details. The Validation Sequence tests the DB directly.
+              Configure DB details. The Validation Sequence tests the DB directly. Scenario SSH Preamble is for use by scenarios.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
@@ -337,11 +421,11 @@ export default function DatabaseValidationPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
                         <Label htmlFor="db-name">Connection Name</Label>
-                        <Input id="db-name" value={editingConfig.name} onChange={(e) => setEditingConfig({ ...editingConfig, name: e.target.value })} placeholder="e.g., Main User DB" />
+                        <Input id="db-name" value={editingConfig.name} onChange={(e) => setEditingConfig({ ...editingConfig, name: e.target.value })} placeholder="e.g., Main User DB" disabled={isSaving} />
                     </div>
                     <div>
                         <Label htmlFor="db-type">Database Type</Label>
-                        <Select value={editingConfig.type} onValueChange={(value) => setEditingConfig({ ...editingConfig, type: value as DbConnectionConfig['type'] })}>
+                        <Select value={editingConfig.type} onValueChange={(value) => setEditingConfig({ ...editingConfig, type: value as DbConnectionConfig['type'] })} disabled={isSaving}>
                         <SelectTrigger id="db-type"><SelectValue /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="mysql">MySQL</SelectItem>
@@ -353,74 +437,74 @@ export default function DatabaseValidationPage() {
                     </div>
                     <div>
                         <Label htmlFor="db-host">Hostname or IP Address</Label>
-                        <Input id="db-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="db.example.com" />
+                        <Input id="db-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="db.example.com" disabled={isSaving} />
                     </div>
                     <div>
                         <Label htmlFor="db-port">Port</Label>
-                        <Input id="db-port" type="number" value={editingConfig.port} onChange={(e) => setEditingConfig({ ...editingConfig, port: parseInt(e.target.value) || 3306 })} />
+                        <Input id="db-port" type="number" value={editingConfig.port} onChange={(e) => setEditingConfig({ ...editingConfig, port: parseInt(e.target.value) || 3306 })} disabled={isSaving} />
                     </div>
                     <div>
                         <Label htmlFor="db-username">Username</Label>
-                        <Input id="db-username" value={editingConfig.username} onChange={(e) => setEditingConfig({ ...editingConfig, username: e.target.value })} />
+                        <Input id="db-username" value={editingConfig.username} onChange={(e) => setEditingConfig({ ...editingConfig, username: e.target.value })} disabled={isSaving} />
                     </div>
                     <div>
                         <Label htmlFor="db-password">Password</Label>
-                        <Input id="db-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter DB password" />
+                        <Input id="db-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter DB password" disabled={isSaving} />
                     </div>
                     <div className="md:col-span-2">
                         <Label htmlFor="db-databaseName">Database Name</Label>
-                        <Input id="db-databaseName" value={editingConfig.databaseName} onChange={(e) => setEditingConfig({ ...editingConfig, databaseName: e.target.value })} placeholder="e.g., radius_data" />
+                        <Input id="db-databaseName" value={editingConfig.databaseName} onChange={(e) => setEditingConfig({ ...editingConfig, databaseName: e.target.value })} placeholder="e.g., radius_data" disabled={isSaving} />
                     </div>
                 </div>
               </fieldset>
 
               <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">Scenario SSH Preamble (for scenarios using this DB)</legend>
-                <p className="text-xs text-muted-foreground mt-1 mb-3">Define SSH commands to run before scenarios access this database (e.g., for bastion hosts, tunnels).</p>
+                <legend className="text-sm font-medium px-1">Scenario SSH Preamble (Simulated - for scenarios using this DB)</legend>
+                <p className="text-xs text-muted-foreground mt-1 mb-3">Define SSH commands to run before scenarios access this database (e.g., for bastion hosts, tunnels). Not used by 'Test Connection & Validation'.</p>
                 <div className="space-y-3">
                   {(editingConfig.sshPreambleSteps || []).map((step, index) => (
                     <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
                       <div className="flex items-center justify-between mb-2">
-                        <Input value={step.name} onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)} className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0" placeholder="Preamble Step Name"/>
+                        <Input value={step.name} onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)} className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0" placeholder="Preamble Step Name" disabled={isSaving}/>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <Switch id={`preamble-enabled-${index}`} checked={step.isEnabled} onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)} aria-label="Enable preamble step"/>
-                          <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7"><Trash2 className="h-4 w-4" /></Button>
+                          <Switch id={`preamble-enabled-${index}`} checked={step.isEnabled} onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)} aria-label="Enable preamble step" disabled={isSaving}/>
+                          <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}><Trash2 className="h-4 w-4" /></Button>
                         </div>
                       </div>
                       <Label htmlFor={`preamble-cmd-${index}`} className="text-xs text-muted-foreground">SSH Command</Label>
-                      <Textarea id={`preamble-cmd-${index}`} value={step.command} onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)} rows={1} className="font-mono text-xs mt-1" placeholder="e.g., ssh user@bastion.example.com"/>
+                      <Textarea id={`preamble-cmd-${index}`} value={step.command} onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)} rows={1} className="font-mono text-xs mt-1" placeholder="e.g., ssh user@bastion.example.com" disabled={isSaving}/>
                       <Label htmlFor={`preamble-expect-${index}`} className="text-xs text-muted-foreground mt-2">Expected Output Contains (Optional)</Label>
-                      <Input id={`preamble-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder="e.g., 'Connection established'"/>
+                      <Input id={`preamble-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder="e.g., 'Connection established'" disabled={isSaving}/>
                     </Card>
                   ))}
-                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="w-full"><PlusCircle className="mr-2 h-4 w-4" /> Add Scenario SSH Step</Button>
+                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="w-full" disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add Scenario SSH Step</Button>
                 </div>
               </fieldset>
               
               <fieldset className="border p-4 rounded-md">
                 <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
-                    <span>Validation Sequence (for 'Test Connection & Validation')</span>
+                    <span>Validation Sequence (Simulated - for 'Test Connection & Validation')</span>
                     <div className="flex gap-2">
-                        <Button variant="outline" size="sm" onClick={() => addValidationStep('sql')}><PlusCircle className="mr-2 h-4 w-4" /> Add SQL Step</Button>
-                        <Button variant="outline" size="sm" onClick={() => addValidationStep('ssh')}><PlusCircle className="mr-2 h-4 w-4" /> Add SSH (on DB Host) Step</Button>
+                        <Button variant="outline" size="sm" onClick={() => addValidationStep('sql')} disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add SQL Step</Button>
+                        <Button variant="outline" size="sm" onClick={() => addValidationStep('ssh')} disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add SSH (DB Host) Step</Button>
                     </div>
                 </legend>
                 <div className="space-y-3 mt-3">
                   {editingConfig.validationSteps.map((step, index) => (
                     <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
                       <div className="flex items-center justify-between mb-2">
-                        <Input value={step.name} onChange={(e) => handleValidationStepChange(index, 'name', e.target.value)} className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent" placeholder="Validation Step Name"/>
+                        <Input value={step.name} onChange={(e) => handleValidationStepChange(index, 'name', e.target.value)} className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent" placeholder="Validation Step Name" disabled={isSaving}/>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="text-xs">{step.type.toUpperCase()}</Badge>
                           {step.isMandatory && <Badge variant="secondary" className="text-xs">Mandatory</Badge>}
-                          <Switch id={`val-step-enabled-${index}`} checked={step.isEnabled} onCheckedChange={(checked) => handleValidationStepChange(index, 'isEnabled', checked)} disabled={step.isMandatory} aria-label="Enable validation step"/>
-                          {!step.isMandatory && <Button variant="ghost" size="icon" onClick={() => removeValidationStep(index)} className="text-destructive hover:text-destructive h-7 w-7"><Trash2 className="h-4 w-4" /></Button>}
+                          <Switch id={`val-step-enabled-${index}`} checked={step.isEnabled} onCheckedChange={(checked) => handleValidationStepChange(index, 'isEnabled', checked)} disabled={step.isMandatory || isSaving} aria-label="Enable validation step"/>
+                          {!step.isMandatory && <Button variant="ghost" size="icon" onClick={() => removeValidationStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}><Trash2 className="h-4 w-4" /></Button>}
                         </div>
                       </div>
                       <Label htmlFor={`val-step-cmd-${index}`} className="text-xs text-muted-foreground">{step.type === 'sql' ? 'SQL Query' : 'SSH Command (on DB host)'}</Label>
-                      <Textarea id={`val-step-cmd-${index}`} value={step.commandOrQuery} onChange={(e) => handleValidationStepChange(index, 'commandOrQuery', e.target.value)} rows={step.type === 'sql' ? 2 : 1} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "SELECT * FROM sessions WHERE id = '...'" : "grep 'ERROR' /var/log/db.log"}/>
+                      <Textarea id={`val-step-cmd-${index}`} value={step.commandOrQuery} onChange={(e) => handleValidationStepChange(index, 'commandOrQuery', e.target.value)} rows={step.type === 'sql' ? 2 : 1} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "SELECT * FROM sessions WHERE id = '...'" : "grep 'ERROR' /var/log/db.log"} disabled={isSaving}/>
                       <Label htmlFor={`val-step-expect-${index}`} className="text-xs text-muted-foreground mt-2">Expected Output Contains (Optional)</Label>
-                      <Input id={`val-step-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleValidationStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "e.g., 'status=active' or '1 rows selected'" : "e.g., 'script_completed_successfully'"}/>
+                      <Input id={`val-step-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleValidationStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "e.g., 'status=active' or '1 rows selected'" : "e.g., 'script_completed_successfully'"} disabled={isSaving}/>
                     </Card>
                   ))}
                 </div>
@@ -430,8 +514,11 @@ export default function DatabaseValidationPage() {
             </ScrollArea>
           )}
           <DialogFooter>
-            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSaveConfig}><Save className="mr-2 h-4 w-4" /> Save Connection</Button>
+            <DialogClose asChild><Button variant="outline" disabled={isSaving}>Cancel</Button></DialogClose>
+            <Button onClick={handleSaveConfig} disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Save Connection
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -461,9 +548,9 @@ export default function DatabaseValidationPage() {
                     testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure' ? 'destructive' :
                     'secondary'
                 } className={cn(
-                    testDbResult.overallStatus === 'success' && 'bg-green-500 hover:bg-green-600',
-                    (testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure') && 'bg-red-500 hover:bg-red-600',
-                    testDbResult.overallStatus === 'partial_success' && 'bg-yellow-500 hover:bg-yellow-600'
+                    testDbResult.overallStatus === 'success' && 'bg-green-500 hover:bg-green-600 text-primary-foreground',
+                    (testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure') && 'bg-red-500 hover:bg-red-600 text-destructive-foreground',
+                    testDbResult.overallStatus === 'partial_success' && 'bg-yellow-500 hover:bg-yellow-600 text-primary-foreground'
                 )}>{testDbResult.overallStatus.replace(/_/g, ' ').toUpperCase()}</Badge></div>
 
                 <Card><CardHeader><CardTitle className="text-lg">Database Connection</CardTitle></CardHeader>
@@ -480,8 +567,8 @@ export default function DatabaseValidationPage() {
                     {testDbResult.validationStepResults.map((step, idx) => (
                         <Card key={`val-${idx}`} className="overflow-hidden">
                             <CardHeader className={cn("p-3 flex flex-row items-center justify-between", step.status === 'success' && 'bg-green-500/10', step.status === 'failure' && 'bg-red-500/10', step.status === 'skipped' && 'bg-gray-500/10')}>
-                                <div className="flex items-center gap-2"><h4 className="font-medium">{step.stepName} <Badge variant="outline" className="text-xs">{step.type}</Badge></h4></div>
-                                <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600', step.status === 'failure' && 'bg-red-600')}>{step.status}</Badge>
+                                <div className="flex items-center gap-2"><h4 className="font-medium">{step.stepName} <Badge variant="outline" className="text-xs">{step.type?.toUpperCase()}</Badge></h4></div>
+                                <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600 text-primary-foreground', step.status === 'failure' && 'bg-red-600 text-destructive-foreground')}>{step.status}</Badge>
                             </CardHeader>
                             {(step.output || step.error || (step.type === 'sql' ? step.query : step.command) ) && 
                                 <CardContent className="p-3 text-xs bg-muted/30">
@@ -506,3 +593,4 @@ export default function DatabaseValidationPage() {
     </div>
   );
 }
+
