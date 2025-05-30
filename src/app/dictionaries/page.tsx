@@ -110,15 +110,25 @@ export default function DictionariesPage() {
       const response = await fetch('/api/dictionaries');
       if (!response.ok) {
         let apiError = `Failed to fetch dictionaries. Status: ${response.status}`;
+        let errorPayload: { message?: string; error?: string } = { message: `API Error: ${response.status}` };
         try {
-          const errorData = await response.json();
-          apiError = errorData.error || errorData.message || apiError;
-          console.error("API error data:", errorData);
-        } catch (e) {
-          const textError = await response.text().catch(() => "Could not get error text from response.");
-          apiError += `. Response: ${textError.substring(0, 150)}`;
-          console.error("FRONTEND: Non-JSON API error response from fetchDictionaries:", textError);
+          const parsedJson = await response.json();
+          if (parsedJson && (parsedJson.message || parsedJson.error)) {
+            errorPayload = parsedJson;
+          } else {
+            const textResponse = await response.text();
+            errorPayload.message = `API Error: ${response.status} - ${textResponse.substring(0, 100) || "Empty or non-JSON response"}`;
+          }
+        } catch (jsonParseError) {
+          try {
+            const textResponse = await response.text();
+            errorPayload.message = `API Error: ${response.status} - ${textResponse.substring(0, 100) || "Failed to parse error response as JSON and text."}`;
+          } catch (textParseError) {
+            errorPayload.message = `API Error: ${response.status} - Unable to retrieve error details.`;
+          }
         }
+        apiError = errorPayload.error || errorPayload.message || apiError;
+        console.error("FRONTEND: API error data for fetchDictionaries:", errorPayload);
         throw new Error(apiError);
       }
       const data: Dictionary[] = await response.json();
@@ -205,8 +215,25 @@ export default function DictionariesPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Unknown error during import."}));
-        throw new Error(errorData.error || errorData.message || 'Failed to import dictionary/dictionaries');
+        let errorPayload: { message?: string; error?: string } = { message: `API Error: ${response.status}` };
+        try {
+          const parsedJson = await response.json();
+          if (parsedJson && (parsedJson.message || parsedJson.error)) {
+            errorPayload = parsedJson;
+          } else {
+            const textResponse = await response.text();
+            errorPayload.message = `API Error: ${response.status} - ${textResponse.substring(0, 100) || "Empty or non-JSON response"}`;
+          }
+        } catch (jsonParseError) {
+          try {
+            const textResponse = await response.text();
+            errorPayload.message = `API Error: ${response.status} - ${textResponse.substring(0, 100) || "Failed to parse error response as JSON and text."}`;
+          } catch (textParseError) {
+            errorPayload.message = `API Error: ${response.status} - Unable to retrieve error details.`;
+          }
+        }
+        console.error("FRONTEND: API error data for import:", errorPayload);
+        throw new Error(errorPayload.error || errorPayload.message || 'Failed to import dictionary/dictionaries');
       }
       
       const resultData = await response.json();
@@ -260,6 +287,7 @@ export default function DictionariesPage() {
   };
 
   const requestSingleDelete = (id: string, name: string) => {
+    console.log(`FRONTEND: requestSingleDelete called for ID ${id}, Name: ${name}`);
     setPendingDeleteInfo({ type: 'single', id, name });
     setShowDeleteConfirmDialog(true);
   };
@@ -269,21 +297,25 @@ export default function DictionariesPage() {
       toast({ title: "No Dictionaries Selected", description: "Please select dictionaries to delete.", variant: "default" });
       return;
     }
+    console.log("FRONTEND: requestBulkDelete called for IDs:", selectedDictionaryIds);
     setPendingDeleteInfo({ type: 'bulk', ids: [...selectedDictionaryIds] });
     setShowDeleteConfirmDialog(true);
   };
 
   const executeConfirmedDelete = async () => {
-    if (!pendingDeleteInfo) return;
+    if (!pendingDeleteInfo) {
+      console.warn("FRONTEND: executeConfirmedDelete called with no pendingDeleteInfo.");
+      return;
+    }
 
     setIsSaving(true);
     const currentPendingDelete = { ...pendingDeleteInfo }; 
-    setPendingDeleteInfo(null); 
-    setShowDeleteConfirmDialog(false); 
+    // Keep pendingDeleteInfo to display message in AlertDialog while saving, clear it in finally block
+    // setShowDeleteConfirmDialog(false); // Keep dialog open during saving if desired, or close immediately
 
     if (currentPendingDelete.type === 'single' && currentPendingDelete.id && currentPendingDelete.name) {
       const { id, name } = currentPendingDelete;
-      console.log(`FRONTEND: Attempting to delete dictionary ID: ${id}, Name: ${name}`);
+      console.log(`FRONTEND: Confirmed delete for single dictionary ID: ${id}, Name: ${name}`);
       try {
         const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
         console.log(`FRONTEND: Single delete API response status for ID ${id}: ${response.status}`);
@@ -297,8 +329,8 @@ export default function DictionariesPage() {
           throw new Error(errorMsg);
         }
         toast({ title: "Dictionary Deleted", description: `Dictionary "${name}" removed.` });
-        await fetchDictionaries();
-        setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id));
+        await fetchDictionaries(); // Refresh list
+        setSelectedDictionaryIds(prev => prev.filter(selectedId => selectedId !== id)); // Update selection state
         console.log(`FRONTEND: Successfully deleted dictionary ID: ${id}. Refetched dictionaries.`);
       } catch (error) {
         console.error(`FRONTEND: Error deleting dictionary ID ${id}:`, error);
@@ -306,7 +338,7 @@ export default function DictionariesPage() {
       }
     } else if (currentPendingDelete.type === 'bulk' && currentPendingDelete.ids && currentPendingDelete.ids.length > 0) {
       const idsToDelete = currentPendingDelete.ids;
-      console.log("FRONTEND: Executing bulk delete for IDs:", idsToDelete);
+      console.log("FRONTEND: Confirmed delete for bulk IDs:", idsToDelete);
       toast({ title: "Bulk Delete In Progress", description: `Attempting to delete ${idsToDelete.length} dictionaries...` });
 
       const deletePromises = idsToDelete.map(id =>
@@ -358,8 +390,10 @@ export default function DictionariesPage() {
       }
       
       await fetchDictionaries(); 
-      setSelectedDictionaryIds([]);
+      setSelectedDictionaryIds([]); 
     }
+    setShowDeleteConfirmDialog(false); // Close dialog after operation
+    setPendingDeleteInfo(null); // Clear pending info
     setIsSaving(false);
   };
 
@@ -452,13 +486,13 @@ export default function DictionariesPage() {
     }).join(', ');
   };
   
-  const isAllSelected = dictionaries.length > 0 && selectedDictionaryIds.length === dictionaries.length;
-  const isSomeSelected = selectedDictionaryIds.length > 0 && !isAllSelected;
-
   let headerCheckboxCheckedState: boolean | 'indeterminate';
-  if (isAllSelected) {
+  const allVisibleSelected = dictionaries.length > 0 && dictionaries.every(d => selectedDictionaryIds.includes(d.id));
+  const someVisibleSelected = dictionaries.some(d => selectedDictionaryIds.includes(d.id)) && !allVisibleSelected;
+
+  if (allVisibleSelected) {
     headerCheckboxCheckedState = true;
-  } else if (isSomeSelected) {
+  } else if (someVisibleSelected) {
     headerCheckboxCheckedState = 'indeterminate';
   } else {
     headerCheckboxCheckedState = false;
@@ -466,7 +500,7 @@ export default function DictionariesPage() {
 
   const handleSelectAll = (checked: boolean | 'indeterminate') => {
     console.log("FRONTEND: handleSelectAll called with checked:", checked);
-    if (checked === true) {
+    if (checked === true) { // Explicitly true, not indeterminate click
       setSelectedDictionaryIds(dictionaries.map(d => d.id));
     } else { 
       setSelectedDictionaryIds([]);
@@ -638,7 +672,7 @@ export default function DictionariesPage() {
                    <Checkbox
                     checked={headerCheckboxCheckedState}
                     onCheckedChange={(checked) => {
-                        handleSelectAll(Boolean(checked)); 
+                        handleSelectAll(checked === true); // Ensure boolean for select all
                     }}
                     aria-label="Select all dictionaries"
                     disabled={isSaving || dictionaries.length === 0}
