@@ -1,14 +1,14 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from 'react'; // Added useEffect and useRef
+import { useState, useEffect, useRef } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { UploadCloud, Eye, Trash2, PlusCircle, Info, Loader2 } from 'lucide-react'; // Added Loader2
+import { UploadCloud, Eye, Trash2, PlusCircle, Info, Loader2, Edit2, Save } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -21,28 +21,31 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useToast } from "@/hooks/use-toast"; // Added useToast
+import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { ScrollArea } from '@/components/ui/scroll-area'; // Added for potentially long attribute lists
 
-
-export interface Dictionary { // Exporting for API usage
+export interface Dictionary {
   id: string;
   name: string;
-  source: string; 
-  attributes: number; // This will remain a mock count from client-side for now
-  vendorCodes: number; // This will remain a mock count from client-side for now
+  source: string;
+  attributes: number; // This is a count derived from exampleAttributes by the API
+  vendorCodes: number; // This remains a mock count
   isActive: boolean;
   lastUpdated: string;
+  exampleAttributes?: Attribute[]; // Changed from string to Attribute[] for client-side
 }
 
-interface Attribute { // Mocked attribute structure for display
-  id: string;
+interface Attribute {
+  id: string; // Client-side ID for list rendering, backend might not store this if attributes are just an array
   name: string;
   code: string;
   type: string;
@@ -52,21 +55,23 @@ interface Attribute { // Mocked attribute structure for display
   examples?: string;
 }
 
-// Mock example attributes will still be used for the view details dialog
-const exampleAttributes: Attribute[] = [
-    { id: 'attr1', name: 'User-Name', code: '1', type: 'string', vendor: 'Standard', description: 'The username being authenticated.', examples: "User-Name = \"alice\"" },
-    { id: 'attr2', name: 'NAS-IP-Address', code: '4', type: 'ipaddr', vendor: 'Standard', description: 'The IP address of the NAS initiating the request.', examples: "NAS-IP-Address = 192.168.1.1" },
-    { id: 'attr3', name: '3GPP-IMSI', code: '1', type: 'string', vendor: '3GPP (10415)', description: 'International Mobile Subscriber Identity.', examples: "Vendor-Specific = 3GPP, 3GPP-IMSI = \"123456789012345\"" },
-];
-
-
 export default function DictionariesPage() {
   const [dictionaries, setDictionaries] = useState<Dictionary[]>([]);
   const [selectedDictionary, setSelectedDictionary] = useState<Dictionary | null>(null);
-  const [selectedAttribute, setSelectedAttribute] = useState<Attribute | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // For import/toggle operations
+  const [selectedAttributeForDetailView, setSelectedAttributeForDetailView] = useState<Attribute | null>(null); // For existing detail view
   
+  // State for managing the list of example attributes being edited for selectedDictionary
+  const [editingExampleAttributes, setEditingExampleAttributes] = useState<Attribute[]>([]);
+  
+  // State for the "Add/Edit Attribute" sub-dialog
+  const [isAttributeEditorOpen, setIsAttributeEditorOpen] = useState(false);
+  const [currentAttributeToEdit, setCurrentAttributeToEdit] = useState<Partial<Attribute> & { isNew?: boolean } | null>(null);
+  const [attributeEditIndex, setAttributeEditIndex] = useState<number | null>(null); // To track which attribute is being edited
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false); // For import/toggle/delete dictionary
+  const [isSavingAttributes, setIsSavingAttributes] = useState(false); // For saving example attributes
+
   const [newDictName, setNewDictName] = useState('');
   const [newDictSource, setNewDictSource] = useState('');
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
@@ -79,7 +84,8 @@ export default function DictionariesPage() {
       const response = await fetch('/api/dictionaries');
       if (!response.ok) throw new Error('Failed to fetch dictionaries');
       const data = await response.json();
-      setDictionaries(data.map((d: any) => ({ ...d, attributes: 0, vendorCodes: 0 }))); // Add mock counts
+      // API returns exampleAttributes as an array of objects already parsed from JSON string by the API GET routes
+      setDictionaries(data.map((d: any) => ({ ...d, attributes: d.exampleAttributes?.length || 0, vendorCodes: 0 })));
     } catch (error) {
       console.error("Error fetching dictionaries:", error);
       toast({ title: "Error", description: (error as Error).message, variant: "destructive" });
@@ -94,13 +100,8 @@ export default function DictionariesPage() {
   }, []);
 
   const toggleDictionaryActive = async (id: string, currentStatus: boolean) => {
-    // Optimistically update UI
-    setDictionaries(prev =>
-      prev.map(dict =>
-        dict.id === id ? { ...dict, isActive: !currentStatus } : dict
-      )
-    );
-
+    setIsSaving(true);
+    setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: !currentStatus } : dict));
     try {
       const response = await fetch(`/api/dictionaries/${id}`, {
         method: 'PUT',
@@ -112,18 +113,14 @@ export default function DictionariesPage() {
         throw new Error(errorData.message || 'Failed to update dictionary status');
       }
       const updatedDict = await response.json();
-      // Confirm update with server response (or re-fetch)
-      setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? { ...updatedDict, attributes: d.attributes, vendorCodes: d.vendorCodes } : d));
+      setDictionaries(prev => prev.map(d => d.id === updatedDict.id ? { ...updatedDict, attributes: updatedDict.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes } : d));
       toast({ title: "Success", description: `Dictionary "${updatedDict.name}" status updated.` });
     } catch (error) {
       console.error("Error toggling dictionary status:", error);
       toast({ title: "Update Failed", description: (error as Error).message, variant: "destructive" });
-      // Revert optimistic update
-      setDictionaries(prev =>
-        prev.map(dict =>
-          dict.id === id ? { ...dict, isActive: currentStatus } : dict
-        )
-      );
+      setDictionaries(prev => prev.map(dict => dict.id === id ? { ...dict, isActive: currentStatus } : dict));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -144,7 +141,7 @@ export default function DictionariesPage() {
         throw new Error(errorData.message || 'Failed to import dictionary');
       }
       const newDictionary = await response.json();
-      setDictionaries(prev => [ { ...newDictionary, attributes: 0, vendorCodes: 0 }, ...prev]);
+      setDictionaries(prev => [ { ...newDictionary, attributes: newDictionary.exampleAttributes?.length || 0, vendorCodes: 0 }, ...prev]);
       toast({ title: "Dictionary Imported", description: `Dictionary "${newDictionary.name}" metadata added.` });
       setNewDictName('');
       setNewDictSource('');
@@ -158,9 +155,8 @@ export default function DictionariesPage() {
   };
   
   const handleDeleteDictionary = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete the dictionary "${name}"?`)) return;
-    
-    setIsSaving(true); // Use generic saving state or a specific deleting state
+    if (!window.confirm(`Are you sure you want to delete the dictionary "${name}"? This will also remove its example attributes.`)) return;
+    setIsSaving(true);
     try {
       const response = await fetch(`/api/dictionaries/${id}`, { method: 'DELETE' });
       if (!response.ok) {
@@ -177,21 +173,77 @@ export default function DictionariesPage() {
     }
   };
 
-
   const handleViewDictionary = (dictionary: Dictionary) => {
     setSelectedDictionary(dictionary);
-    // In a real app, fetch actual attributes for this dictionary
+    // API now returns exampleAttributes as an array of objects.
+    // Ensure it's an array, provide default empty if not.
+    const attributesArray = Array.isArray(dictionary.exampleAttributes) ? dictionary.exampleAttributes : [];
+    setEditingExampleAttributes(JSON.parse(JSON.stringify(attributesArray))); // Deep copy for editing
   };
   
-  const handleViewAttribute = (attribute: Attribute) => {
-    setSelectedAttribute(attribute);
+  const handleViewAttributeDetail = (attribute: Attribute) => {
+    setSelectedAttributeForDetailView(attribute);
   };
+
+  // Handlers for Add/Edit Example Attribute sub-dialog
+  const openAttributeEditor = (attribute?: Attribute, index?: number) => {
+    setCurrentAttributeToEdit(attribute ? { ...attribute } : { id: `client_attr_${Date.now()}`, name: '', code: '', type: '', vendor: selectedDictionary?.name || 'Standard', description: '', examples: '', isNew: !attribute });
+    setAttributeEditIndex(attribute ? index! : null); // Use index for editing existing
+    setIsAttributeEditorOpen(true);
+  };
+
+  const handleSaveAttributeInEditor = () => {
+    if (!currentAttributeToEdit) return;
+
+    setEditingExampleAttributes(prev => {
+      const newAttributes = [...prev];
+      if (attributeEditIndex !== null && !currentAttributeToEdit.isNew) { // Editing existing
+        newAttributes[attributeEditIndex] = currentAttributeToEdit as Attribute;
+      } else { // Adding new
+        newAttributes.push(currentAttributeToEdit as Attribute);
+      }
+      return newAttributes;
+    });
+    setIsAttributeEditorOpen(false);
+    setCurrentAttributeToEdit(null);
+    setAttributeEditIndex(null);
+  };
+
+  const handleDeleteEditingAttribute = (index: number) => {
+     setEditingExampleAttributes(prev => prev.filter((_, i) => i !== index));
+  };
+  
+  const handleSaveChangesToDictionaryAttributes = async () => {
+    if (!selectedDictionary) return;
+    setIsSavingAttributes(true);
+    try {
+      const response = await fetch(`/api/dictionaries/${selectedDictionary.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exampleAttributes: editingExampleAttributes }), // API expects JSON array (stringified)
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to save example attributes');
+      }
+      const updatedDictionary = await response.json();
+      setDictionaries(prev => prev.map(d => d.id === updatedDictionary.id ? { ...updatedDictionary, attributes: updatedDictionary.exampleAttributes?.length || 0, vendorCodes: d.vendorCodes } : d));
+      setSelectedDictionary(null); // Close main dialog
+      toast({ title: "Attributes Saved", description: `Example attributes for "${updatedDictionary.name}" updated.` });
+    } catch (error) {
+      console.error("Error saving attributes:", error);
+      toast({ title: "Save Failed", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsSavingAttributes(false);
+    }
+  };
+
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="RADIUS Dictionary Manager"
-        description="Import, manage, and inspect RADIUS dictionaries and Vendor-Specific Attributes (VSAs)."
+        description="Manage dictionary metadata and their example attributes. Full dictionary file parsing is conceptual."
         actions={
           <Dialog open={isImportDialogOpen} onOpenChange={setIsImportDialogOpen}>
             <DialogTrigger asChild>
@@ -201,7 +253,7 @@ export default function DictionariesPage() {
               <DialogHeader>
                 <DialogTitle>Import New Dictionary (Metadata)</DialogTitle>
                 <DialogDescription>
-                  Provide a name and source for the dictionary. Full dictionary file parsing is conceptual for this prototype.
+                  Provide a name and source. Example attributes can be added after import.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -213,12 +265,6 @@ export default function DictionariesPage() {
                   <Label htmlFor="dict-source">Source / Vendor</Label>
                   <Input id="dict-source" value={newDictSource} onChange={(e) => setNewDictSource(e.target.value)} placeholder="e.g., Custom, AcmeCorp" disabled={isSaving} />
                 </div>
-                {/* Conceptual file input - not functional for actual parsing in this step */}
-                {/* <div>
-                  <Label htmlFor="dict-file">Dictionary File (Conceptual)</Label>
-                  <Input id="dict-file" type="file" disabled />
-                  <p className="text-xs text-muted-foreground mt-1">Actual file parsing not implemented in this prototype.</p>
-                </div> */}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsImportDialogOpen(false)} disabled={isSaving}>Cancel</Button>
@@ -235,7 +281,7 @@ export default function DictionariesPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle>Available Dictionaries</CardTitle>
-          <CardDescription>Enable or disable dictionaries for use in scenarios and packet editing.</CardDescription>
+          <CardDescription>Enable or disable dictionaries and manage their example attributes.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -249,7 +295,7 @@ export default function DictionariesPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Source</TableHead>
-                <TableHead className="text-center">Attributes (Mock)</TableHead>
+                <TableHead className="text-center">Example Attributes</TableHead>
                 <TableHead className="text-center">Active</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -277,8 +323,9 @@ export default function DictionariesPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                          <DropdownMenuItem onClick={() => handleViewDictionary(dict)} disabled={isSaving}>
-                           <Eye className="mr-2 h-4 w-4" /> View Attributes (Mock)
+                           <Eye className="mr-2 h-4 w-4" /> Manage Example Attributes
                          </DropdownMenuItem>
+                         <DropdownMenuSeparator />
                          <DropdownMenuItem onClick={() => handleDeleteDictionary(dict.id, dict.name)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={isSaving}>
                            <Trash2 className="mr-2 h-4 w-4" /> Delete
                          </DropdownMenuItem>
@@ -305,18 +352,21 @@ export default function DictionariesPage() {
          </CardFooter>
       </Card>
 
-      {/* Dialog for Viewing Dictionary Attributes (Still using mock data) */}
-      <Dialog open={!!selectedDictionary} onOpenChange={(isOpen) => !isOpen && setSelectedDictionary(null)}>
-        <DialogContent className="max-w-3xl">
+      {/* Dialog for Viewing/Managing Dictionary Example Attributes */}
+      <Dialog open={!!selectedDictionary} onOpenChange={(isOpen) => { if (!isOpen) setSelectedDictionary(null); }}>
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>{selectedDictionary?.name} Attributes (Mock Data)</DialogTitle>
-            <DialogDescription>Browse attributes within this dictionary. (Note: Attribute data is mocked for this prototype).</DialogDescription>
+            <DialogTitle>{selectedDictionary?.name} - Example Attributes</DialogTitle>
+            <DialogDescription>Manage the example attributes for this dictionary. These are stored with the dictionary metadata.</DialogDescription>
           </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto py-4">
+          <div className="my-4">
+             <Button onClick={() => openAttributeEditor()}><PlusCircle className="mr-2 h-4 w-4" /> Add Example Attribute</Button>
+          </div>
+          <ScrollArea className="max-h-[50vh] border rounded-md">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Attribute Name</TableHead>
+                  <TableHead>Name</TableHead>
                   <TableHead>Code</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Vendor</TableHead>
@@ -324,51 +374,85 @@ export default function DictionariesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {exampleAttributes.map(attr => (
-                  <TableRow key={attr.id}>
+                {editingExampleAttributes.map((attr, index) => (
+                  <TableRow key={attr.id || index}>
                     <TableCell>{attr.name}</TableCell>
                     <TableCell>{attr.code}</TableCell>
                     <TableCell>{attr.type}</TableCell>
                     <TableCell>{attr.vendor}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => handleViewAttribute(attr)}>
-                        <Info className="mr-1 h-4 w-4" /> Details
+                    <TableCell className="text-right space-x-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleViewAttributeDetail(attr)}>
+                        <Info className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openAttributeEditor(attr, index)}>
+                        <Edit2 className="h-4 w-4" />
+                      </Button>
+                       <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive h-7 w-7" onClick={() => handleDeleteEditingAttribute(index)}>
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </TableCell>
                   </TableRow>
                 ))}
-                 {exampleAttributes.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-4">No mock attributes to display.</TableCell></TableRow>
+                 {editingExampleAttributes.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-4">No example attributes defined for this dictionary.</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
           <DialogFooter>
-            <DialogClose asChild><Button variant="outline">Close</Button></DialogClose>
+            <Button variant="outline" onClick={() => setSelectedDictionary(null)} disabled={isSavingAttributes}>Cancel</Button>
+            <Button onClick={handleSaveChangesToDictionaryAttributes} disabled={isSavingAttributes}>
+              {isSavingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Save Changes to Attributes
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Dialog for Viewing Attribute Details (Still using mock data) */}
-       <Dialog open={!!selectedAttribute} onOpenChange={(isOpen) => !isOpen && setSelectedAttribute(null)}>
+      {/* Dialog for Adding/Editing a single Example Attribute */}
+      <Dialog open={isAttributeEditorOpen} onOpenChange={setIsAttributeEditorOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Attribute: {selectedAttribute?.name} (Mock Data)</DialogTitle>
+            <DialogTitle>{currentAttributeToEdit?.isNew ? 'Add New Example Attribute' : `Edit Attribute: ${currentAttributeToEdit?.name}`}</DialogTitle>
+            <DialogDescription>Provide details for the example attribute.</DialogDescription>
+          </DialogHeader>
+          {currentAttributeToEdit && (
+            <div className="space-y-3 py-4">
+              <div><Label>Name:</Label><Input value={currentAttributeToEdit.name || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, name: e.target.value} : null)} /></div>
+              <div><Label>Code:</Label><Input value={currentAttributeToEdit.code || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, code: e.target.value} : null)} /></div>
+              <div><Label>Type:</Label><Input value={currentAttributeToEdit.type || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, type: e.target.value} : null)} placeholder="e.g., string, integer, ipaddr" /></div>
+              <div><Label>Vendor:</Label><Input value={currentAttributeToEdit.vendor || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, vendor: e.target.value} : null)} placeholder="e.g., Standard, Cisco" /></div>
+              <div><Label>Description:</Label><Textarea value={currentAttributeToEdit.description || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, description: e.target.value} : null)} /></div>
+              <div><Label>Example Usage:</Label><Textarea value={currentAttributeToEdit.examples || ''} onChange={e => setCurrentAttributeToEdit(p => p ? {...p, examples: e.target.value} : null)} placeholder='e.g., User-Name = "testuser"' /></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsAttributeEditorOpen(false); setCurrentAttributeToEdit(null); }}>Cancel</Button>
+            <Button onClick={handleSaveAttributeInEditor}>Save Attribute</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog for Viewing Attribute Details (from selectedAttributeForDetailView) */}
+       <Dialog open={!!selectedAttributeForDetailView} onOpenChange={(isOpen) => !isOpen && setSelectedAttributeForDetailView(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Attribute: {selectedAttributeForDetailView?.name}</DialogTitle>
             <DialogDescription>Details for RADIUS attribute.</DialogDescription>
           </DialogHeader>
-          {selectedAttribute && (
+          {selectedAttributeForDetailView && (
             <div className="space-y-3 py-4 text-sm">
-              <p><strong>Code:</strong> {selectedAttribute.code}</p>
-              <p><strong>Type:</strong> {selectedAttribute.type}</p>
-              <p><strong>Vendor:</strong> {selectedAttribute.vendor}</p>
-              <p><strong>Description:</strong> {selectedAttribute.description}</p>
-              {selectedAttribute.enumValues && (
-                <p><strong>Allowed Values:</strong> {selectedAttribute.enumValues.join(', ')}</p>
+              <p><strong>Code:</strong> {selectedAttributeForDetailView.code}</p>
+              <p><strong>Type:</strong> {selectedAttributeForDetailView.type}</p>
+              <p><strong>Vendor:</strong> {selectedAttributeForDetailView.vendor}</p>
+              <p><strong>Description:</strong> {selectedAttributeForDetailView.description}</p>
+              {selectedAttributeForDetailView.enumValues && (
+                <p><strong>Allowed Values:</strong> {selectedAttributeForDetailView.enumValues.join(', ')}</p>
               )}
-              {selectedAttribute.examples && (
+              {selectedAttributeForDetailView.examples && (
                 <div>
                   <strong>Example Usage:</strong>
-                  <pre className="mt-1 p-2 bg-muted rounded-md text-xs overflow-x-auto">{selectedAttribute.examples}</pre>
+                  <pre className="mt-1 p-2 bg-muted rounded-md text-xs overflow-x-auto">{selectedAttributeForDetailView.examples}</pre>
                 </div>
               )}
             </div>
@@ -382,5 +466,4 @@ export default function DictionariesPage() {
     </div>
   );
 }
-
     

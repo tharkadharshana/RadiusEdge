@@ -34,10 +34,10 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
     const dictionary: Dictionary = {
       ...dictFromDb,
       isActive: Boolean(dictFromDb.isActive),
-      exampleAttributes: exampleAttrs,
+      exampleAttributes: exampleAttrs, // API returns parsed array
       attributes: exampleAttrs.length, // Count example attributes
       vendorCodes: 0, // Placeholder
-    } as unknown as Dictionary;
+    } as unknown as Dictionary; // Cast might be needed if Dictionary type expects attributes array
 
     return NextResponse.json(dictionary);
   } catch (error) {
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
 // PUT (update) a dictionary's metadata by ID (e.g., toggle isActive or update exampleAttributes)
 export async function PUT(request: NextRequest, { params }: { params: Params }) {
   try {
-    const body = await request.json() as Partial<Pick<Dictionary, 'name' | 'source' | 'isActive' | 'exampleAttributes'>>;
+    const body = await request.json(); // Expecting { name?, source?, isActive?, exampleAttributes? (as array) }
 
     const db = await getDb();
     const existingDict = await db.get('SELECT * FROM dictionaries WHERE id = ?', params.id);
@@ -61,6 +61,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       name: body.name !== undefined ? body.name : existingDict.name,
       source: body.source !== undefined ? body.source : existingDict.source,
       isActive: typeof body.isActive === 'boolean' ? body.isActive : Boolean(existingDict.isActive),
+      // Client sends array, we stringify for DB. If not provided, keep existing.
       exampleAttributes: body.exampleAttributes !== undefined ? JSON.stringify(body.exampleAttributes) : existingDict.exampleAttributes,
       lastUpdated: new Date().toISOString(),
     };
@@ -88,9 +89,9 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const dictionaryToReturn: Dictionary = {
         ...updatedDict,
         isActive: Boolean(updatedDict.isActive),
-        exampleAttributes: exampleAttrsRet,
-        attributes: exampleAttrsRet.length, // Count example attributes
-        vendorCodes: 0, // Placeholder
+        exampleAttributes: exampleAttrsRet, // API returns parsed array
+        attributes: exampleAttrsRet.length,
+        vendorCodes: 0, 
     } as unknown as Dictionary;
 
 

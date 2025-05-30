@@ -24,14 +24,16 @@ export async function GET() {
     const db = await getDb();
     const dictionariesFromDb = await db.all('SELECT id, name, source, isActive, lastUpdated, exampleAttributes FROM dictionaries ORDER BY name ASC');
     
-    const dictionaries: Dictionary[] = dictionariesFromDb.map(d => ({
-      ...d,
-      isActive: Boolean(d.isActive), // Ensure boolean
-      exampleAttributes: parseJsonField(d.exampleAttributes),
-      // Mock attributesCount and vendorCodesCount as these are not stored in this simplified backend
-      attributes: (parseJsonField(d.exampleAttributes)).length, // Count example attributes
-      vendorCodes: 0, // Placeholder
-    })) as unknown as Dictionary[]; // Cast needed due to placeholder counts
+    const dictionaries: Dictionary[] = dictionariesFromDb.map(d => {
+      const exampleAttrs = parseJsonField(d.exampleAttributes);
+      return {
+        ...d,
+        isActive: Boolean(d.isActive), 
+        exampleAttributes: exampleAttrs, // API returns parsed array
+        attributes: exampleAttrs.length, 
+        vendorCodes: 0, 
+      } as unknown as Dictionary;
+    });
 
     return NextResponse.json(dictionaries);
   } catch (error) {
@@ -56,9 +58,9 @@ export async function POST(request: NextRequest) {
       id,
       name: body.name,
       source: body.source,
-      isActive: true, // Default to active
+      isActive: true, 
       lastUpdated: new Date().toISOString(),
-      exampleAttributes: JSON.stringify([]), // Initialize with empty array for example attributes
+      exampleAttributes: JSON.stringify([]), // Initialize with empty array string for example attributes
     };
 
     await db.run(
@@ -71,12 +73,11 @@ export async function POST(request: NextRequest) {
       newDictionaryMetadata.exampleAttributes
     );
 
-    // Return the created metadata, plus placeholders for counts
     const returnData: Dictionary = {
       ...newDictionaryMetadata,
-      exampleAttributes: [],
-      attributes: 0, // Placeholder
-      vendorCodes: 0, // Placeholder
+      exampleAttributes: [], // Return as parsed array
+      attributes: 0, 
+      vendorCodes: 0, 
     } as unknown as Dictionary;
 
 
