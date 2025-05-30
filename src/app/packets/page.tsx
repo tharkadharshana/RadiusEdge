@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -45,23 +45,34 @@ export interface RadiusPacket {
   tags: string[];
 }
 
-// Mock dictionary for autocomplete - remains client-side for now
-const dictionaryAttributes = [
-  "User-Name", "User-Password", "NAS-IP-Address", "NAS-Port", "Service-Type",
-  "Framed-IP-Address", "Calling-Station-Id", "Called-Station-Id", "Acct-Status-Type",
-  "Acct-Session-Id", "NAS-Identifier", "Vendor-Specific", "EAP-Message", "Message-Authenticator"
-];
+// Debounce function
+function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const debounced = (...args: Parameters<F>) => {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+    timeout = setTimeout(() => func(...args), waitFor);
+  };
+  return debounced as (...args: Parameters<F>) => ReturnType<F>;
+}
+
 
 export default function PacketsPage() {
   const [packets, setPackets] = useState<RadiusPacket[]>([]);
   const [editingPacket, setEditingPacket] = useState<RadiusPacket | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [attributeSearch, setAttributeSearch] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [pastedAttributesText, setPastedAttributesText] = useState('');
   const [isParsingAttributes, setIsParsingAttributes] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
+  const [currentAttributeNameQuery, setCurrentAttributeNameQuery] = useState('');
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+
+
   const { toast } = useToast();
 
   const fetchPackets = async () => {
@@ -94,9 +105,10 @@ export default function PacketsPage() {
 
   const handleEditPacket = (packet: RadiusPacket | null) => {
     setEditingPacket(packet ? JSON.parse(JSON.stringify(packet)) : null); // Deep copy
-    setAttributeSearch('');
     setSuggestions([]);
-    setPastedAttributesText(''); // Reset pasted text when opening dialog
+    setActiveSuggestionIndex(null);
+    setCurrentAttributeNameQuery('');
+    setPastedAttributesText('');
   };
 
   const handleSavePacket = async () => {
@@ -159,6 +171,33 @@ export default function PacketsPage() {
     }
   };
 
+  // Debounced fetch for attribute suggestions
+  const debouncedFetchAttributeSuggestions = useCallback(
+    debounce(async (query: string, forAttributeIndex: number) => {
+      if (!query.trim()) {
+        setSuggestions([]);
+        setActiveSuggestionIndex(forAttributeIndex);
+        return;
+      }
+      setIsFetchingSuggestions(true);
+      try {
+        const response = await fetch(`/api/dictionaries/attributes/search?q=${encodeURIComponent(query)}`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch attribute suggestions');
+        }
+        const data: string[] = await response.json();
+        setSuggestions(data);
+        setActiveSuggestionIndex(forAttributeIndex);
+      } catch (error) {
+        console.error("Error fetching attribute suggestions:", error);
+        setSuggestions([]);
+        toast({ title: "Suggestion Error", description: "Could not fetch attribute suggestions.", variant: "destructive", duration: 2000 });
+      } finally {
+        setIsFetchingSuggestions(false);
+      }
+    }, 300),
+    [toast]
+  );
 
   const handleAttributeChange = (index: number, field: 'name' | 'value', value: string) => {
     if (editingPacket) {
@@ -167,21 +206,28 @@ export default function PacketsPage() {
       setEditingPacket({ ...editingPacket, attributes: updatedAttributes });
 
       if (field === 'name') {
-        setAttributeSearch(value);
-        if (value) {
-          setSuggestions(dictionaryAttributes.filter(attr => attr.toLowerCase().includes(value.toLowerCase())));
+        setCurrentAttributeNameQuery(value); // Store the current query for the active input
+        setActiveSuggestionIndex(index); // Set current input as active for suggestions
+        if (value.trim()) {
+          debouncedFetchAttributeSuggestions(value, index);
         } else {
-          setSuggestions([]);
+          setSuggestions([]); // Clear suggestions if input is empty
         }
       }
     }
   };
 
   const selectSuggestion = (index: number, suggestion: string) => {
-    handleAttributeChange(index, 'name', suggestion);
+    if (editingPacket) {
+      const updatedAttributes = [...editingPacket.attributes];
+      updatedAttributes[index] = { ...updatedAttributes[index], name: suggestion };
+      setEditingPacket({ ...editingPacket, attributes: updatedAttributes });
+    }
     setSuggestions([]);
-    setAttributeSearch('');
+    setActiveSuggestionIndex(null);
+    setCurrentAttributeNameQuery('');
   };
+
 
   const addAttribute = () => {
     if (editingPacket) {
@@ -408,23 +454,37 @@ export default function PacketsPage() {
                       id={`attr-name-${index}`}
                       value={attr.name}
                       onChange={(e) => handleAttributeChange(index, 'name', e.target.value)}
+                      onFocus={() => {
+                        setActiveSuggestionIndex(index);
+                        // Optionally, if current attr.name is not empty, trigger initial suggestion fetch
+                        if(attr.name.trim()){
+                            debouncedFetchAttributeSuggestions(attr.name, index);
+                        } else {
+                            setSuggestions([]); // Clear if name is empty on focus
+                        }
+                      }}
                       placeholder="e.g., User-Name"
                       className="font-mono"
                       disabled={isSaving || isParsingAttributes}
+                      autoComplete="off"
                     />
-                     {attributeSearch === attr.name && suggestions.length > 0 && (
-                      <Card className="absolute z-10 mt-1 w-full shadow-lg max-h-40 overflow-y-auto">
+                     {activeSuggestionIndex === index && currentAttributeNameQuery === attr.name && suggestions.length > 0 && (
+                      <Card className="absolute z-10 mt-1 w-full shadow-lg max-h-40 overflow-y-auto border">
                         <CardContent className="p-1">
-                          {suggestions.map(s => (
-                            <Button
-                              key={s}
-                              variant="ghost"
-                              className="w-full justify-start h-8 px-2"
-                              onClick={() => selectSuggestion(index, s)}
-                            >
-                              {s}
-                            </Button>
-                          ))}
+                          {isFetchingSuggestions ? (
+                            <div className="p-2 text-center text-sm text-muted-foreground">Loading...</div>
+                          ) : (
+                            suggestions.map(s => (
+                              <Button
+                                key={s}
+                                variant="ghost"
+                                className="w-full justify-start h-8 px-2 text-sm"
+                                onClick={() => selectSuggestion(index, s)}
+                              >
+                                {s}
+                              </Button>
+                            ))
+                          )}
                         </CardContent>
                       </Card>
                     )}
@@ -462,3 +522,4 @@ export default function PacketsPage() {
     </div>
   );
 }
+
