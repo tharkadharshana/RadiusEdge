@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X, Wand2, Loader2 } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Play, Settings2, GripVertical, FileText, Database, Clock, Repeat, GitBranch, ListChecks, MoreHorizontal, Search, Workflow, Variable, Save, X, Wand2, Loader2, Webhook, MessageSquareText } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -36,9 +36,15 @@ import { useToast } from '@/hooks/use-toast';
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
 
 
-type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end';
+type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end' | 'api_call' | 'log_message';
 
 interface ExpectedReplyAttribute {
+  id: string;
+  name: string;
+  value: string;
+}
+
+interface ApiHeader {
   id: string;
   name: string;
   value: string;
@@ -49,17 +55,30 @@ interface ScenarioStep {
   type: ScenarioStepType;
   name: string;
   details: Record<string, any> & {
+    // RADIUS
     packet_id?: string;
     expectedAttributes?: ExpectedReplyAttribute[];
     timeout?: number;
     retries?: number;
+    // SQL
     query?: string;
     expect_column?: string;
     expect_value?: string;
     connection?: string;
+    // Delay
     duration_ms?: number;
+    // Loop
     iterations?: number;
+    // Conditional / Loop condition
     condition?: string;
+    // API Call
+    url?: string;
+    method?: 'GET' | 'POST';
+    headers?: ApiHeader[];
+    requestBody?: string;
+    mockResponseBody?: string; // For simulation
+    // Log Message
+    message?: string;
   };
 }
 
@@ -88,9 +107,13 @@ const initialScenarios: Scenario[] = [
     variables: [{id: 'var1', name: 'imsi', type: 'random_string', value: '3134600000000[0-9]{3}'}],
     steps: [
       { id: 's1', type: 'radius', name: 'Send Access-Request', details: { packet_id: '3gpp_auth_req', expectedAttributes: [{id: 'exp1_1', name: 'Framed-IP-Address', value: '192.168.1.100'}], timeout: 3000, retries: 2 } },
+      { id: 's1_cond_start', type: 'conditional_start', name: 'If Access-Accept Received', details: { condition: "RADIUS_Reply_Code == 'Access-Accept'"}},
       { id: 's2', type: 'sql', name: 'Verify Session Status', details: { query: "SELECT status FROM sessions WHERE imsi = ${imsi}", expect_column: "status", expect_value: "active", connection: "prod_db" } },
+      { id: 's2_log', type: 'log_message', name: 'Log Success', details: { message: "IMSI ${imsi} session active in DB."}},
+      { id: 's1_cond_end', type: 'conditional_end', name: 'End If', details: {}},
       { id: 's3', type: 'delay', name: 'Wait for Session Duration', details: { duration_ms: 60000 } },
       { id: 's4', type: 'radius', name: 'Send Interim-Update', details: { packet_id: '3gpp_interim_acct', expectedAttributes: [], timeout: 3000, retries: 1 } },
+      { id: 's5_api', type: 'api_call', name: 'Notify External System', details: { url: 'https://my.api.example.com/notify', method: 'POST', requestBody: '{ "imsi": "${imsi}", "status": "interim_update_sent"}', headers: [{id: 'header1', name: 'Content-Type', value: 'application/json'}, {id:'header2', name: 'X-API-Key', value: 'mysecretkey'}], mockResponseBody: '{ "status": "received" }' }}
     ],
     lastModified: '2024-07-20',
     tags: ['3GPP', 'E2E', 'Auth', 'Acct']
@@ -101,11 +124,11 @@ const initialScenarios: Scenario[] = [
     description: 'Tests EAP-TTLS authentication for a WiFi hotspot.',
     variables: [],
     steps: [
-        { id: 's1', type: 'radius', name: 'EAP-Start', details: { packet_id: 'eap_start_req', expectedAttributes: [], timeout: 3000, retries: 2 } },
-        { id: 's2', type: 'loop_start', name: 'EAP Exchange Loop', details: { iterations: 5, condition: "response_contains_eap_challenge" } },
-        { id: 's3', type: 'radius', name: 'EAP-Response', details: { packet_id: 'eap_response_phase2', expectedAttributes: [], timeout: 3000, retries: 2 } },
-        { id: 's4', type: 'loop_end', name: 'End EAP Exchange', details: {} },
-        { id: 's5', type: 'radius', name: 'EAP-Success Check', details: { packet_id: '', expectedAttributes: [{id: 'exp2_1', name:'EAP-Type', value: 'Success'}], timeout: 5000, retries: 2 } },
+        { id: 's1_wifi', type: 'radius', name: 'EAP-Start', details: { packet_id: 'eap_start_req', expectedAttributes: [], timeout: 3000, retries: 2 } },
+        { id: 's2_wifi', type: 'loop_start', name: 'EAP Exchange Loop', details: { iterations: 5, condition: "response_contains_eap_challenge" } },
+        { id: 's3_wifi', type: 'radius', name: 'EAP-Response', details: { packet_id: 'eap_response_phase2', expectedAttributes: [], timeout: 3000, retries: 2 } },
+        { id: 's4_wifi', type: 'loop_end', name: 'End EAP Exchange', details: {} },
+        { id: 's5_wifi', type: 'radius', name: 'EAP-Success Check', details: { packet_id: '', expectedAttributes: [{id: 'exp2_1', name:'EAP-Type', value: 'Success'}], timeout: 5000, retries: 2 } },
     ],
     lastModified: '2024-07-18',
     tags: ['WiFi', 'EAP', 'Auth']
@@ -117,9 +140,11 @@ const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   sql: Database,
   delay: Clock,
   loop_start: Repeat,
-  loop_end: Repeat,
+  loop_end: Repeat, 
   conditional_start: GitBranch,
   conditional_end: GitBranch,
+  api_call: Webhook,
+  log_message: MessageSquareText,
 };
 
 export default function ScenariosPage() {
@@ -151,7 +176,7 @@ export default function ScenariosPage() {
 
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
-    setPastedAttributesText(''); // Clear pasted text when opening/closing dialog
+    setPastedAttributesText(''); 
   };
 
   const handleSaveScenario = () => {
@@ -228,7 +253,14 @@ export default function ScenariosPage() {
         stepDetails = { condition: '' };
       } else if (type === 'conditional_end') {
         stepName = 'Conditional End';
+      } else if (type === 'api_call') {
+        stepName = 'New API Call';
+        stepDetails = { url: '', method: 'GET', headers: [{id: `header_${Date.now()}`, name: 'Content-Type', value: 'application/json'}], requestBody: '', mockResponseBody: '{ "success": true }' };
+      } else if (type === 'log_message') {
+        stepName = 'New Log Message';
+        stepDetails = { message: 'Log: ' };
       }
+
 
       setEditingScenario(prev => prev ? {
         ...prev,
@@ -297,6 +329,47 @@ export default function ScenariosPage() {
       }
     }
   };
+  
+  const addApiHeader = (stepIndex: number) => {
+    if (editingScenario) {
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'api_call') {
+        const newHeader: ApiHeader = { id: `header_${Date.now()}`, name: '', value: '' };
+        step.details.headers = [...(step.details.headers || []), newHeader];
+        setEditingScenario({ ...editingScenario, steps: updatedSteps });
+      }
+    }
+  };
+
+  const removeApiHeader = (stepIndex: number, headerId: string) => {
+    if (editingScenario) {
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'api_call' && step.details.headers) {
+        step.details.headers = step.details.headers.filter((h: ApiHeader) => h.id !== headerId);
+        setEditingScenario({ ...editingScenario, steps: updatedSteps });
+      }
+    }
+  };
+
+  const handleApiHeaderChange = (stepIndex: number, headerId: string, field: 'name' | 'value', newValue: string) => {
+    if (editingScenario) {
+      const updatedSteps = [...editingScenario.steps];
+      const step = updatedSteps[stepIndex];
+      if (step.type === 'api_call' && step.details.headers) {
+        const headerIndex = step.details.headers.findIndex((h: ApiHeader) => h.id === headerId);
+        if (headerIndex > -1) {
+          step.details.headers[headerIndex] = {
+            ...step.details.headers[headerIndex],
+            [field]: newValue
+          };
+          setEditingScenario({ ...editingScenario, steps: updatedSteps });
+        }
+      }
+    }
+  };
+
 
   const handleParsePastedAttributes = async (stepIndex: number) => {
     if (!editingScenario || !pastedAttributesText.trim()) {
@@ -309,7 +382,7 @@ export default function ScenariosPage() {
       const result: ParseRadiusAttributesOutput = await parseRadiusAttributesFromString(input);
       
       const newExpectedAttributes: ExpectedReplyAttribute[] = result.parsedAttributes.map(pa => ({
-        id: `exp_attr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, // ensure unique ID
+        id: `exp_attr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, 
         name: pa.name,
         value: pa.value,
       }));
@@ -317,10 +390,9 @@ export default function ScenariosPage() {
       const updatedSteps = [...editingScenario.steps];
       const step = updatedSteps[stepIndex];
       if (step.type === 'radius') {
-        // Replace existing or add new ones
         step.details.expectedAttributes = newExpectedAttributes;
         setEditingScenario({ ...editingScenario, steps: updatedSteps });
-        setPastedAttributesText(''); // Clear textarea after parsing
+        setPastedAttributesText(''); 
         toast({ title: "Attributes Parsed", description: `${newExpectedAttributes.length} attributes added/updated.` });
       }
     } catch (error) {
@@ -426,7 +498,7 @@ export default function ScenariosPage() {
           <DialogHeader>
             <DialogTitle>{editingScenario?.id === 'new' ? 'Create New Scenario' : `Edit Scenario: ${editingScenario?.name}`}</DialogTitle>
             <DialogDescription>
-              Define scenario properties, variables, and steps.
+              Define scenario properties, variables, and steps. Conditional logic is visual only for this prototype. API calls are simulated.
             </DialogDescription>
           </DialogHeader>
           {editingScenario && (
@@ -495,6 +567,8 @@ export default function ScenariosPage() {
                         <DropdownMenuItem onClick={() => addStep('radius')}><FileText className="mr-2 h-4 w-4" /> RADIUS Packet</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('sql')}><Database className="mr-2 h-4 w-4" /> SQL Validation</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('delay')}><Clock className="mr-2 h-4 w-4" /> Delay</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => addStep('api_call')}><Webhook className="mr-2 h-4 w-4" /> API Call (Simulated)</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => addStep('log_message')}><MessageSquareText className="mr-2 h-4 w-4" /> Log Message</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => addStep('loop_start')}><Repeat className="mr-2 h-4 w-4" /> Loop Start</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => addStep('loop_end')}><Repeat className="mr-2 h-4 w-4 transform scale-x-[-1]" /> Loop End</DropdownMenuItem>
@@ -608,12 +682,61 @@ export default function ScenariosPage() {
                           {(step.type === 'loop_start' || step.type === 'conditional_start') && (
                             <div className="space-y-2 pl-7 text-sm">
                               {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} /></div>}
-                              <Label>Condition (optional):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
+                              <Label>Condition:</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})}/>
+                              {step.type === 'conditional_start' && <p className="text-xs text-muted-foreground">Note: Conditional execution is visual only in this prototype.</p>}
                             </div>
                           )}
                           {(step.type === 'loop_end' || step.type === 'conditional_end') && (
                             <p className="pl-7 text-sm text-muted-foreground">Marks the end of the block.</p>
                           )}
+                          
+                          {/* API Call Step Details */}
+                          {step.type === 'api_call' && (
+                            <div className="space-y-3 pl-7 text-sm">
+                              <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })}/></div>
+                              <div>
+                                <Label>Method:</Label>
+                                <Select value={step.details.method || 'GET'} onValueChange={(v) => handleStepChange(index, 'details', {method: v as 'GET' | 'POST'})}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="GET">GET</SelectItem>
+                                    <SelectItem value="POST">POST</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                               <div>
+                                <Label className="font-medium">Headers:</Label>
+                                {(step.details.headers || []).map((header: ApiHeader) => (
+                                    <div key={header.id} className="flex items-end gap-2 mt-1 p-2 border rounded-md bg-muted/20">
+                                    <div className="flex-1">
+                                        <Label htmlFor={`header-name-${header.id}`} className="text-xs">Header Name</Label>
+                                        <Input id={`header-name-${header.id}`} value={header.name} onChange={(e) => handleApiHeaderChange(index, header.id, 'name', e.target.value)} placeholder="e.g., Content-Type"/>
+                                    </div>
+                                    <div className="flex-1">
+                                        <Label htmlFor={`header-value-${header.id}`} className="text-xs">Header Value</Label>
+                                        <Input id={`header-value-${header.id}`} value={header.value} onChange={(e) => handleApiHeaderChange(index, header.id, 'value', e.target.value)} placeholder="e.g., application/json"/>
+                                    </div>
+                                    <Button variant="ghost" size="icon" onClick={() => removeApiHeader(index, header.id)} className="text-destructive hover:text-destructive h-8 w-8"><X className="h-4 w-4" /></Button>
+                                    </div>
+                                ))}
+                                <Button variant="outline" size="sm" onClick={() => addApiHeader(index)} className="mt-2"><PlusCircle className="mr-2 h-3 w-3" /> Add Header</Button>
+                               </div>
+                              {step.details.method === 'POST' && (
+                                <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={step.details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3}/></div>
+                              )}
+                              <div><Label>Mock Response Body (JSON for simulation):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3}/></div>
+                              <p className="text-xs text-muted-foreground">Note: API calls are simulated. No actual HTTP request will be made.</p>
+                            </div>
+                          )}
+
+                          {/* Log Message Step Details */}
+                          {step.type === 'log_message' && (
+                            <div className="space-y-2 pl-7 text-sm">
+                                <Label>Message to Log:</Label>
+                                <Textarea placeholder="Enter message. You can use ${variable_name}." value={step.details.message || ''} onChange={(e) => handleStepChange(index, 'details', {message: e.target.value})} rows={2}/>
+                            </div>
+                          )}
+
                         </Card>
                       )
                     })}
