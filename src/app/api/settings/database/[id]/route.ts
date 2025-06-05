@@ -35,6 +35,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
       directTestSshPreamble: parseJsonField(configFromDb.directTestSshPreamble, []),
       validationSteps: parseJsonField(configFromDb.validationSteps, []),
       port: Number(configFromDb.port),
+      jumpServerPort: configFromDb.jumpServerPort ? Number(configFromDb.jumpServerPort) : undefined,
     } as DbConnectionConfig;
 
     return NextResponse.json(config);
@@ -58,6 +59,14 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const updatedConfigData = {
       name: body.name || existingConfig.name,
       type: body.type || existingConfig.type,
+      // Jump Server
+      jumpServerHost: body.jumpServerHost !== undefined ? body.jumpServerHost : existingConfig.jumpServerHost,
+      jumpServerPort: body.jumpServerPort !== undefined ? Number(body.jumpServerPort) : existingConfig.jumpServerPort,
+      jumpServerUser: body.jumpServerUser !== undefined ? body.jumpServerUser : existingConfig.jumpServerUser,
+      jumpServerAuthMethod: body.jumpServerAuthMethod !== undefined ? body.jumpServerAuthMethod : existingConfig.jumpServerAuthMethod,
+      jumpServerPrivateKey: body.jumpServerPrivateKey !== undefined ? body.jumpServerPrivateKey : existingConfig.jumpServerPrivateKey,
+      jumpServerPassword: body.jumpServerPassword !== undefined ? body.jumpServerPassword : existingConfig.jumpServerPassword,
+      // Target DB
       host: body.host || existingConfig.host,
       port: body.port !== undefined ? Number(body.port) : Number(existingConfig.port),
       username: body.username || existingConfig.username,
@@ -72,24 +81,22 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const result = await db.run(
       `UPDATE db_configs SET 
         name = ?, type = ?, host = ?, port = ?, username = ?, password = ?, 
-        databaseName = ?, status = ?, sshPreambleSteps = ?, directTestSshPreamble = ?, validationSteps = ?
+        databaseName = ?, status = ?, sshPreambleSteps = ?, directTestSshPreamble = ?, validationSteps = ?,
+        jumpServerHost = ?, jumpServerPort = ?, jumpServerUser = ?, jumpServerAuthMethod = ?,
+        jumpServerPrivateKey = ?, jumpServerPassword = ?
       WHERE id = ?`,
-      updatedConfigData.name,
-      updatedConfigData.type,
-      updatedConfigData.host,
-      updatedConfigData.port,
-      updatedConfigData.username,
-      updatedConfigData.password,
-      updatedConfigData.databaseName,
-      updatedConfigData.status,
-      updatedConfigData.sshPreambleSteps,
-      updatedConfigData.directTestSshPreamble,
+      updatedConfigData.name, updatedConfigData.type, updatedConfigData.host, updatedConfigData.port,
+      updatedConfigData.username, updatedConfigData.password, updatedConfigData.databaseName,
+      updatedConfigData.status, updatedConfigData.sshPreambleSteps, updatedConfigData.directTestSshPreamble,
       updatedConfigData.validationSteps,
+      updatedConfigData.jumpServerHost, updatedConfigData.jumpServerPort, updatedConfigData.jumpServerUser,
+      updatedConfigData.jumpServerAuthMethod, updatedConfigData.jumpServerPrivateKey, updatedConfigData.jumpServerPassword,
       params.id
     );
 
     if (result.changes === 0) {
-        return NextResponse.json({ message: 'Database configuration not found or no changes made' }, { status: 404 });
+        // This can happen if the data sent is identical to the existing data.
+        // Fetch and return the current config to ensure client has up-to-date representation.
     }
     
     const updatedConfigFromDb = await db.get('SELECT * FROM db_configs WHERE id = ?', params.id);
@@ -103,6 +110,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       directTestSshPreamble: parseJsonField(updatedConfigFromDb.directTestSshPreamble, []),
       validationSteps: parseJsonField(updatedConfigFromDb.validationSteps, []),
       port: Number(updatedConfigFromDb.port),
+      jumpServerPort: updatedConfigFromDb.jumpServerPort ? Number(updatedConfigFromDb.jumpServerPort) : undefined,
     } as DbConnectionConfig;
 
     return NextResponse.json(configToReturn);

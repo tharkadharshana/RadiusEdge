@@ -28,6 +28,7 @@ export async function GET() {
       directTestSshPreamble: parseJsonField(c.directTestSshPreamble, []),
       validationSteps: parseJsonField(c.validationSteps, []),
       port: Number(c.port),
+      jumpServerPort: c.jumpServerPort ? Number(c.jumpServerPort) : undefined,
     })) as DbConnectionConfig[];
 
     return NextResponse.json(configs);
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as Omit<DbConnectionConfig, 'id'>;
 
     if (!body.name || !body.host || !body.databaseName) {
-      return NextResponse.json({ message: 'Connection name, host, and database name are required' }, { status: 400 });
+      return NextResponse.json({ message: 'Connection name, target DB host, and target database name are required' }, { status: 400 });
     }
 
     const db = await getDb();
@@ -51,34 +52,39 @@ export async function POST(request: NextRequest) {
       id: uuidv4(),
       name: body.name,
       type: body.type || 'mysql',
+      // Jump Server
+      jumpServerHost: body.jumpServerHost || undefined,
+      jumpServerPort: body.jumpServerPort ? Number(body.jumpServerPort) : undefined,
+      jumpServerUser: body.jumpServerUser || undefined,
+      jumpServerAuthMethod: body.jumpServerAuthMethod || undefined,
+      jumpServerPrivateKey: body.jumpServerPrivateKey || undefined,
+      jumpServerPassword: body.jumpServerPassword || undefined,
+      // Target DB
       host: body.host,
       port: Number(body.port) || 3306,
       username: body.username || '',
       password: body.password || '',
       databaseName: body.databaseName,
       status: body.status || 'unknown',
-      sshPreambleSteps: body.sshPreambleSteps || [],
-      directTestSshPreamble: body.directTestSshPreamble || [],
+      sshPreambleSteps: body.sshPreambleSteps || [], // For scenarios
+      directTestSshPreamble: body.directTestSshPreamble || [], // For Test Connection on Jump Server
       validationSteps: body.validationSteps || [],
     };
 
     await db.run(
       `INSERT INTO db_configs (
         id, name, type, host, port, username, password, databaseName,
-        status, sshPreambleSteps, directTestSshPreamble, validationSteps
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      newConfig.id,
-      newConfig.name,
-      newConfig.type,
-      newConfig.host,
-      newConfig.port,
-      newConfig.username,
-      newConfig.password,
-      newConfig.databaseName,
-      newConfig.status,
+        status, sshPreambleSteps, directTestSshPreamble, validationSteps,
+        jumpServerHost, jumpServerPort, jumpServerUser, jumpServerAuthMethod,
+        jumpServerPrivateKey, jumpServerPassword
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      newConfig.id, newConfig.name, newConfig.type, newConfig.host, newConfig.port,
+      newConfig.username, newConfig.password, newConfig.databaseName, newConfig.status,
       JSON.stringify(newConfig.sshPreambleSteps),
       JSON.stringify(newConfig.directTestSshPreamble),
-      JSON.stringify(newConfig.validationSteps)
+      JSON.stringify(newConfig.validationSteps),
+      newConfig.jumpServerHost, newConfig.jumpServerPort, newConfig.jumpServerUser,
+      newConfig.jumpServerAuthMethod, newConfig.jumpServerPrivateKey, newConfig.jumpServerPassword
     );
 
     return NextResponse.json(newConfig, { status: 201 });

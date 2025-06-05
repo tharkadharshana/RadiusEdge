@@ -91,7 +91,9 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       sql: `CREATE TABLE IF NOT EXISTS db_configs (
               id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, host TEXT, port INTEGER,
               username TEXT, password TEXT, databaseName TEXT, status TEXT,
-              sshPreambleSteps TEXT, validationSteps TEXT, directTestSshPreamble TEXT
+              sshPreambleSteps TEXT, validationSteps TEXT, directTestSshPreamble TEXT,
+              jumpServerHost TEXT, jumpServerPort INTEGER, jumpServerUser TEXT, 
+              jumpServerAuthMethod TEXT, jumpServerPrivateKey TEXT, jumpServerPassword TEXT
             );`
     },
     {
@@ -150,6 +152,12 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
     { table: 'server_configs', column: 'customServerType', type: 'TEXT' },
     { table: 'server_configs', column: 'connectionTestSshPreamble', type: 'TEXT' },
     { table: 'db_configs', column: 'directTestSshPreamble', type: 'TEXT' },
+    { table: 'db_configs', column: 'jumpServerHost', type: 'TEXT' },
+    { table: 'db_configs', column: 'jumpServerPort', type: 'INTEGER' },
+    { table: 'db_configs', column: 'jumpServerUser', type: 'TEXT' },
+    { table: 'db_configs', column: 'jumpServerAuthMethod', type: 'TEXT' },
+    { table: 'db_configs', column: 'jumpServerPrivateKey', type: 'TEXT' },
+    { table: 'db_configs', column: 'jumpServerPassword', type: 'TEXT' },
   ];
 
   for (const item of columnsToAdd) {

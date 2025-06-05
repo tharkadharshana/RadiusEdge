@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle, Edit3, Trash2, Save, DatabaseZap, TestTube2, MoreHorizontal, Terminal, Settings, GripVertical, PlayCircle, CheckCircle, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Save, DatabaseZap, TestTube2, MoreHorizontal, Terminal, Settings, GripVertical, PlayCircle, CheckCircle, XCircle, AlertTriangle, Loader2, KeyRound } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -32,9 +32,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { testDbValidation, TestDbValidationInput, TestDbValidationOutput, DbValidationStepClient } from '@/ai/flows/test-db-validation-flow';
+import { testDbValidation, TestDbValidationInput, TestDbValidationOutput, DbValidationStepClient, DbSshPreambleStepConfigClient } from '@/ai/flows/test-db-validation-flow';
 
-export type DbStatus = 'connected_validated' | 'connected_issues' | 'connection_error' | 'validation_error' | 'unknown' | 'testing';
+export type DbStatus = 'connected_validated' | 'connected_issues' | 'connection_error' | 'validation_error' | 'unknown' | 'testing' | 'jump_server_connection_failure' | 'preamble_failure';
+
 
 export interface DbSshPreambleStepConfig { 
   id: string;
@@ -58,22 +59,30 @@ export interface DbConnectionConfig {
   id: string;
   name: string;
   type: 'mysql' | 'postgresql' | 'mssql' | 'sqlite';
+  // Jump Server Details
+  jumpServerHost?: string;
+  jumpServerPort?: number;
+  jumpServerUser?: string;
+  jumpServerAuthMethod?: 'key' | 'password';
+  jumpServerPrivateKey?: string;
+  jumpServerPassword?: string;
+  // Target DB Server Details (accessed from jump server or directly)
   host: string;
   port: number;
   username: string;
   password?: string; 
   databaseName: string;
   status?: DbStatus;
-  sshPreambleSteps: DbSshPreambleStepConfig[]; // For scenarios
-  directTestSshPreamble?: DbSshPreambleStepConfig[]; // For direct "Test Connection"
-  validationSteps: DbValidationStepConfig[];
+  sshPreambleSteps: DbSshPreambleStepConfig[]; // For scenarios using this DB config (e.g. if DB itself needs an SSH tunnel setup by scenario)
+  directTestSshPreamble?: DbSshPreambleStepConfig[]; // For "Test Connection & Validation" - these run on the jump server.
+  validationSteps: DbValidationStepConfig[]; // For "Test Connection & Validation" - these run against target DB or on target DB host.
 }
 
 const getDefaultDbSshPreamble = (): DbSshPreambleStepConfig[] => [
-    { id: `db_ssh_pre_scenario_${Date.now()}`, name: 'Example: Connect to DB Bastion (Scenario)', command: 'ssh user@db-bastion.example.com', isEnabled: false, expectedOutputContains: "Connected to db-bastion" },
+    { id: `db_ssh_pre_scenario_${Date.now()}`, name: 'Example: Scenario SSH Step (e.g. Tunnel)', command: 'ssh -L 3307:${target_db_host}:3306 user@scenario-bastion.example.com -N -f', isEnabled: false, expectedOutputContains: "" },
 ];
-const getDefaultDirectTestSshPreamble = (): DbSshPreambleStepConfig[] => [
-    { id: `db_ssh_pre_direct_test_${Date.now()}`, name: 'Example: Pre-DB Test SSH Command', command: 'echo "Preamble for DB test"', isEnabled: false, expectedOutputContains: "Preamble for DB test" },
+const getDefaultDirectTestSshPreamble = (): DbSshPreambleStepConfig[] => [ // These run on the Jump Server
+    { id: `db_ssh_pre_direct_test_${Date.now()}`, name: 'Example: Check Jump Server Connectivity', command: 'ping -c 1 google.com', isEnabled: false, expectedOutputContains: "1 packets transmitted" },
 ];
 
 
@@ -181,19 +190,26 @@ export default function DatabaseValidationPage() {
       id: 'new',
       name: 'New DB Connection',
       type: 'mysql',
+      // Jump Server
+      jumpServerHost: '',
+      jumpServerPort: 22,
+      jumpServerUser: '',
+      jumpServerAuthMethod: 'key',
+      jumpServerPrivateKey: '',
+      jumpServerPassword: '',
+      // Target DB
       host: '',
       port: 3306,
       username: '',
       password: '',
       databaseName: '',
       status: 'unknown',
-      sshPreambleSteps: getDefaultDbSshPreamble(),
-      directTestSshPreamble: getDefaultDirectTestSshPreamble(),
+      sshPreambleSteps: getDefaultDbSshPreamble(), // For scenarios using this DB
+      directTestSshPreamble: getDefaultDirectTestSshPreamble(), // For "Test Connection" - runs on Jump Server
       validationSteps: getDefaultDbValidationSteps(),
     });
   };
 
-  // Generic SshPreambleStepConfig handler for both preamble lists
   const handleDbSshPreambleStepChange = (
     listName: 'sshPreambleSteps' | 'directTestSshPreamble',
     index: number,
@@ -251,7 +267,7 @@ export default function DatabaseValidationPage() {
     if (editingConfig) {
       const newStep: DbValidationStepConfig = {
         id: `db_val_custom_${Date.now()}`, 
-        name: type === 'sql' ? 'New SQL Validation Step' : 'New SSH Command Step', 
+        name: type === 'sql' ? 'New SQL Validation Step' : 'New SSH Command Step (on DB Host)', 
         type, 
         commandOrQuery: '', 
         isEnabled: true, 
@@ -280,30 +296,41 @@ export default function DatabaseValidationPage() {
             name: s.name, type: s.type, commandOrQuery: s.commandOrQuery, isEnabled: s.isEnabled, isMandatory: s.isMandatory, expectedOutputContains: s.expectedOutputContains
         }));
         
-        const directTestPreambleClientSteps: DbSshPreambleStepConfig[] | undefined = configToTest.directTestSshPreamble?.map(s => ({
+        const directTestPreambleClientSteps: DbSshPreambleStepConfigClient[] | undefined = configToTest.directTestSshPreamble?.map(s => ({
             id: s.id, name: s.name, command: s.command, isEnabled: s.isEnabled, expectedOutputContains: s.expectedOutputContains
         }));
 
 
         const input: TestDbValidationInput = {
             id: configToTest.id,
+            // Jump Server Details
+            jumpServerHost: configToTest.jumpServerHost,
+            jumpServerPort: configToTest.jumpServerPort,
+            jumpServerUser: configToTest.jumpServerUser,
+            jumpServerAuthMethod: configToTest.jumpServerAuthMethod,
+            jumpServerPrivateKey: configToTest.jumpServerPrivateKey,
+            jumpServerPassword: configToTest.jumpServerPassword,
+            // Target DB Details
             dbType: configToTest.type,
             dbHost: configToTest.host,
             dbPort: configToTest.port,
             dbUsername: configToTest.username,
             dbPassword: configToTest.password || '', 
             dbName: configToTest.databaseName,
-            directTestSshPreamble: directTestPreambleClientSteps,
-            validationSteps: validationClientSteps,
+            // Steps
+            directTestSshPreamble: directTestPreambleClientSteps, // Runs on Jump Server
+            validationSteps: validationClientSteps, // Runs against target DB or on target DB host
         };
         const result = await testDbValidation(input);
         setTestDbResult(result);
 
         let newStatus: DbStatus = 'unknown';
         if (result.overallStatus === 'success') newStatus = 'connected_validated';
+        else if (result.overallStatus === 'jump_server_connection_failure') newStatus = 'jump_server_connection_failure';
+        else if (result.overallStatus === 'preamble_failure') newStatus = 'preamble_failure'; // Jump Server Preamble Failed
+        else if (result.overallStatus === 'connection_failure') newStatus = 'connection_error'; // Target DB Connection Failed
+        else if (result.overallStatus === 'validation_failure') newStatus = 'validation_error'; // Target DB Validation Failed
         else if (result.overallStatus === 'partial_success') newStatus = 'connected_issues';
-        else if (result.overallStatus === 'connection_failure') newStatus = 'connection_error';
-        else if (result.overallStatus === 'validation_failure') newStatus = 'validation_error';
         
         const updatedConfigForSave = { ...configToTest, status: newStatus };
         const response = await fetch(`/api/settings/database/${configToTest.id}`, {
@@ -331,7 +358,9 @@ export default function DatabaseValidationPage() {
     switch (status) {
       case 'connected_validated': return <Badge className="bg-green-100 text-green-700 border-green-300 dark:bg-green-700/30 dark:text-green-300 dark:border-green-600">Validated</Badge>;
       case 'connected_issues': return <Badge className="bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-700/30 dark:text-yellow-300 dark:border-yellow-600">Issues</Badge>;
-      case 'connection_error': return <Badge variant="destructive" className="bg-red-100 text-red-700 border-red-300 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">Connection Error</Badge>;
+      case 'jump_server_connection_failure': return <Badge variant="destructive" className="bg-red-100 text-red-700 border-red-300 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">Jump Server Error</Badge>;
+      case 'preamble_failure': return <Badge variant="destructive" className="bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-700/30 dark:text-orange-300 dark:border-orange-600">Preamble Error</Badge>;
+      case 'connection_error': return <Badge variant="destructive" className="bg-red-100 text-red-700 border-red-300 dark:bg-red-700/30 dark:text-red-300 dark:border-red-600">DB Connection Error</Badge>;
       case 'validation_error': return <Badge variant="destructive" className="bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-700/30 dark:text-orange-300 dark:border-orange-600">Validation Error</Badge>;
       case 'testing': return <Badge variant="outline" className="text-blue-600 border-blue-400 dark:text-blue-400 dark:border-blue-500"><Loader2 className="mr-1 h-3 w-3 animate-spin" />Testing...</Badge>;
       case 'unknown': default: return <Badge variant="outline">Unknown</Badge>;
@@ -415,7 +444,7 @@ export default function DatabaseValidationPage() {
     <div className="space-y-8">
       <PageHeader
         title="Database Validation Setup"
-        description="Configure DB connections for result validation. Scenario SSH preambles are for scenario execution. Direct Test SSH Preambles run before 'Test Connection & Validation'."
+        description="Configure DB connections. For Jump Server setups, provide Jump Server SSH details. 'Direct Test SSH Preamble' runs on the Jump Server. 'Scenario SSH Preamble' is for scenario-specific SSH (e.g., tunnels)."
         actions={
           <Button onClick={createNewConfig} disabled={isLoading || isSaving}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add DB Connection
@@ -439,8 +468,8 @@ export default function DatabaseValidationPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Type</TableHead>
-                <TableHead>Host:Port</TableHead>
-                <TableHead>Database</TableHead>
+                <TableHead>DB Host (from Jump)</TableHead>
+                <TableHead>Jump Server</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -451,7 +480,7 @@ export default function DatabaseValidationPage() {
                   <TableCell className="font-medium">{config.name}</TableCell>
                   <TableCell><Badge variant="outline">{config.type.toUpperCase()}</Badge></TableCell>
                   <TableCell>{config.host}:{config.port}</TableCell>
-                  <TableCell>{config.databaseName}</TableCell>
+                  <TableCell>{config.jumpServerHost ? `${config.jumpServerHost}:${config.jumpServerPort || 22}` : 'Direct'}</TableCell>
                   <TableCell>{getDbStatusBadge(config.status)}</TableCell>
                   <TableCell className="text-right">
                      <DropdownMenu>
@@ -497,21 +526,21 @@ export default function DatabaseValidationPage() {
                 {editingConfig?.id === 'new' ? 'Add New Database Connection' : `Edit Connection: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Configure DB details.
+              Configure Jump Server (if any) and Target Database details.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
             <ScrollArea className="max-h-[75vh] pr-2 -mr-6 pl-1">
             <div className="space-y-6 py-4 pr-4">
               <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">Basic Connection Details</legend>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                  <legend className="text-sm font-medium px-1">Connection Name & Type</legend>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
-                        <Label htmlFor="db-name">Connection Name</Label>
-                        <Input id="db-name" value={editingConfig.name} onChange={(e) => setEditingConfig({ ...editingConfig, name: e.target.value })} placeholder="e.g., Main User DB" disabled={isSaving} />
+                        <Label htmlFor="db-conn-name">Connection Name</Label>
+                        <Input id="db-conn-name" value={editingConfig.name} onChange={(e) => setEditingConfig({ ...editingConfig, name: e.target.value })} placeholder="e.g., Main User DB" disabled={isSaving} />
                     </div>
                     <div>
-                        <Label htmlFor="db-type">Database Type</Label>
+                        <Label htmlFor="db-type">Target Database Type</Label>
                         <Select value={editingConfig.type} onValueChange={(value) => setEditingConfig({ ...editingConfig, type: value as DbConnectionConfig['type'] })} disabled={isSaving}>
                         <SelectTrigger id="db-type"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -522,39 +551,85 @@ export default function DatabaseValidationPage() {
                         </SelectContent>
                         </Select>
                     </div>
+                  </div>
+              </fieldset>
+
+              <fieldset className="border p-4 rounded-md">
+                  <legend className="text-sm font-medium px-1">Jump Server SSH Details (Optional)</legend>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                        <div>
+                            <Label htmlFor="jump-server-host">Jump Server Host</Label>
+                            <Input id="jump-server-host" value={editingConfig.jumpServerHost || ''} onChange={(e) => setEditingConfig({ ...editingConfig, jumpServerHost: e.target.value })} placeholder="jump.example.com" disabled={isSaving}/>
+                        </div>
+                        <div>
+                            <Label htmlFor="jump-server-port">Jump Server SSH Port</Label>
+                            <Input id="jump-server-port" type="number" value={editingConfig.jumpServerPort || 22} onChange={(e) => setEditingConfig({ ...editingConfig, jumpServerPort: parseInt(e.target.value) || 22 })} disabled={isSaving}/>
+                        </div>
+                        <div>
+                            <Label htmlFor="jump-server-user">Jump Server SSH User</Label>
+                            <Input id="jump-server-user" value={editingConfig.jumpServerUser || ''} onChange={(e) => setEditingConfig({ ...editingConfig, jumpServerUser: e.target.value })} disabled={isSaving}/>
+                        </div>
+                        <div>
+                            <Label htmlFor="jump-auth-method">Jump Server Auth Method</Label>
+                            <Select value={editingConfig.jumpServerAuthMethod || 'key'} onValueChange={(value) => setEditingConfig({ ...editingConfig, jumpServerAuthMethod: value as 'key' | 'password' })} disabled={isSaving}>
+                                <SelectTrigger id="jump-auth-method"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                <SelectItem value="key">SSH Key</SelectItem>
+                                <SelectItem value="password">Password</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        {editingConfig.jumpServerAuthMethod === 'key' ? (
+                            <div className="md:col-span-2">
+                                <Label htmlFor="jump-ssh-key">Jump Server Private Key</Label>
+                                <Textarea id="jump-ssh-key" value={editingConfig.jumpServerPrivateKey || ''} onChange={(e) => setEditingConfig({...editingConfig, jumpServerPrivateKey: e.target.value})} placeholder="Paste private key for jump server" rows={3} disabled={isSaving}/>
+                            </div>
+                        ) : (
+                            <div>
+                                <Label htmlFor="jump-ssh-password">Jump Server Password</Label>
+                                <Input id="jump-ssh-password" type="password" value={editingConfig.jumpServerPassword || ''} onChange={(e) => setEditingConfig({...editingConfig, jumpServerPassword: e.target.value})} placeholder="Enter jump server SSH password" disabled={isSaving}/>
+                            </div>
+                        )}
+                  </div>
+              </fieldset>
+
+
+              <fieldset className="border p-4 rounded-md">
+                <legend className="text-sm font-medium px-1">Target Database Details (Accessed from Jump Server or Directly)</legend>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
-                        <Label htmlFor="db-host">Hostname or IP Address</Label>
-                        <Input id="db-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="db.example.com" disabled={isSaving} />
+                        <Label htmlFor="db-host">Target DB Hostname/IP</Label>
+                        <Input id="db-host" value={editingConfig.host} onChange={(e) => setEditingConfig({ ...editingConfig, host: e.target.value })} placeholder="db.internal.example.com or localhost" disabled={isSaving} />
                     </div>
                     <div>
-                        <Label htmlFor="db-port">Port</Label>
+                        <Label htmlFor="db-port">Target DB Port</Label>
                         <Input id="db-port" type="number" value={editingConfig.port} onChange={(e) => setEditingConfig({ ...editingConfig, port: parseInt(e.target.value) || 3306 })} disabled={isSaving} />
                     </div>
                     <div>
-                        <Label htmlFor="db-username">Username</Label>
+                        <Label htmlFor="db-username">Target DB Username</Label>
                         <Input id="db-username" value={editingConfig.username} onChange={(e) => setEditingConfig({ ...editingConfig, username: e.target.value })} disabled={isSaving} />
                     </div>
                     <div>
-                        <Label htmlFor="db-password">Password</Label>
+                        <Label htmlFor="db-password">Target DB Password</Label>
                         <Input id="db-password" type="password" value={editingConfig.password || ''} onChange={(e) => setEditingConfig({...editingConfig, password: e.target.value})} placeholder="Enter DB password" disabled={isSaving} />
                     </div>
                     <div className="md:col-span-2">
-                        <Label htmlFor="db-databaseName">Database Name</Label>
+                        <Label htmlFor="db-databaseName">Target Database Name</Label>
                         <Input id="db-databaseName" value={editingConfig.databaseName} onChange={(e) => setEditingConfig({ ...editingConfig, databaseName: e.target.value })} placeholder="e.g., radius_data" disabled={isSaving} />
                     </div>
                 </div>
               </fieldset>
 
               {renderDbSshPreambleList(
-                'directTestSshPreamble',
-                'Direct Test SSH Preamble (Simulated)',
-                "SSH commands to run *before* the 'Test Connection & Validation' sequence (e.g., for SSH tunnels to the DB host). Uses DB host for SSH if details not in command."
+                'directTestSshPreamble', // Runs on Jump Server
+                'Direct Test SSH Preamble (Simulated on Jump Server)',
+                "SSH commands to run *on the Jump Server* before attempting to connect to the Target DB (e.g., check jump server connectivity, setup tunnels from jump server)."
               )}
               
               {renderDbSshPreambleList(
-                'sshPreambleSteps',
+                'sshPreambleSteps', // For Scenarios
                 'Scenario SSH Preamble (Simulated)',
-                "SSH commands to run *before* scenarios access this database (e.g., for bastion hosts, tunnels). Not used by 'Test Connection & Validation'."
+                "SSH commands to run *before* scenarios use this DB connection (e.g., for setting up specific tunnels required by the scenario itself)."
               )}
               
               <fieldset className="border p-4 rounded-md">
@@ -566,7 +641,7 @@ export default function DatabaseValidationPage() {
                     </div>
                 </legend>
                 <p className="text-xs text-muted-foreground mt-1 mb-3">
-                    Define SQL queries or SSH commands (on the DB host) to verify DB state. Runs *after* Direct Test SSH Preamble (if any) and successful DB connection.
+                    Define SQL queries or SSH commands (on the target DB host, typically via jump server) to verify DB state. Runs *after* successful connection to the target DB.
                 </p>
                 <div className="space-y-3 mt-3">
                   {editingConfig.validationSteps.map((step, index) => (
@@ -580,7 +655,7 @@ export default function DatabaseValidationPage() {
                           {!step.isMandatory && <Button variant="ghost" size="icon" onClick={() => removeValidationStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}><Trash2 className="h-4 w-4" /></Button>}
                         </div>
                       </div>
-                      <Label htmlFor={`val-step-cmd-${index}`} className="text-xs text-muted-foreground">{step.type === 'sql' ? 'SQL Query' : 'SSH Command (on DB host)'}</Label>
+                      <Label htmlFor={`val-step-cmd-${index}`} className="text-xs text-muted-foreground">{step.type === 'sql' ? 'SQL Query' : 'SSH Command (on Target DB Host)'}</Label>
                       <Textarea id={`val-step-cmd-${index}`} value={step.commandOrQuery} onChange={(e) => handleValidationStepChange(index, 'commandOrQuery', e.target.value)} rows={step.type === 'sql' ? 2 : 1} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "SELECT * FROM sessions WHERE id = '...'" : "grep 'ERROR' /var/log/db.log"} disabled={isSaving}/>
                       <Label htmlFor={`val-step-expect-${index}`} className="text-xs text-muted-foreground mt-2">Expected Output Contains (Optional)</Label>
                       <Input id={`val-step-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleValidationStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder={step.type === 'sql' ? "e.g., 'status=active' or '1 rows selected'" : "e.g., 'script_completed_successfully'"} disabled={isSaving}/>
@@ -609,7 +684,7 @@ export default function DatabaseValidationPage() {
           <DialogHeader>
             <DialogTitle>DB Test Results: {configs.find(c => c.id === testingDbId)?.name}</DialogTitle>
             <DialogDescription>
-              Showing results of the DB connection and validation sequence.
+              Showing results of the DB connection and validation sequence (simulated).
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-[60vh] pr-4 py-4">
@@ -623,17 +698,33 @@ export default function DatabaseValidationPage() {
               <div className="space-y-4">
                 <div><span className="font-semibold">Overall Status:</span> <Badge variant={
                     testDbResult.overallStatus === 'success' ? 'default' : 
-                    testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure' ? 'destructive' :
+                    ['connection_failure', 'validation_failure', 'jump_server_connection_failure', 'preamble_failure'].includes(testDbResult.overallStatus) ? 'destructive' :
                     'secondary'
                 } className={cn(
                     testDbResult.overallStatus === 'success' && 'bg-green-500 hover:bg-green-600 text-primary-foreground',
-                    (testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure') && 'bg-red-500 hover:bg-red-600 text-destructive-foreground',
+                    testDbResult.overallStatus === 'jump_server_connection_failure' && 'bg-red-700 hover:bg-red-800 text-destructive-foreground',
+                    testDbResult.overallStatus === 'preamble_failure' && 'bg-orange-600 hover:bg-orange-700 text-destructive-foreground',
+                    testDbResult.overallStatus === 'connection_failure' && 'bg-red-600 hover:bg-red-700 text-destructive-foreground',
+                    testDbResult.overallStatus === 'validation_failure' && 'bg-orange-500 hover:bg-orange-600 text-destructive-foreground',
                     testDbResult.overallStatus === 'partial_success' && 'bg-yellow-500 hover:bg-yellow-600 text-primary-foreground'
                 )}>{testDbResult.overallStatus.replace(/_/g, ' ').toUpperCase()}</Badge></div>
                 
-                {/* Display Direct Test SSH Preamble Results if available */}
+                {/* Display Jump Server Connection Result if available */}
+                 {testDbResult.jumpServerConnectionResult && (
+                     <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><KeyRound className="h-5 w-5"/>Jump Server Connection</CardTitle></CardHeader>
+                     <CardContent>
+                        <p className={cn(testDbResult.jumpServerConnectionResult.status === 'success' ? "text-green-600" : "text-red-600")}>
+                            Status: <span className="font-semibold">{testDbResult.jumpServerConnectionResult.status.toUpperCase()}</span>
+                            {testDbResult.jumpServerConnectionResult.error && <span className="ml-2 text-sm">({testDbResult.jumpServerConnectionResult.error})</span>}
+                            {testDbResult.jumpServerConnectionResult.output && <pre className="mt-1 text-xs whitespace-pre-wrap font-mono bg-muted p-2 rounded max-h-20 overflow-y-auto">{testDbResult.jumpServerConnectionResult.output}</pre>}
+                        </p>
+                     </CardContent></Card>
+                 )}
+
+
+                {/* Display Direct Test SSH Preamble Results (on Jump Server) if available */}
                 {testDbResult.directTestSshPreambleResults && testDbResult.directTestSshPreambleResults.length > 0 && (
-                     <Card><CardHeader><CardTitle className="text-lg">Direct Test SSH Preamble Steps</CardTitle></CardHeader>
+                     <Card><CardHeader><CardTitle className="text-lg">Jump Server SSH Preamble Steps</CardTitle></CardHeader>
                      <CardContent className="space-y-2">
                     {testDbResult.directTestSshPreambleResults.map((step, idx) => (
                         <Card key={`preamble-${idx}`} className="overflow-hidden">
@@ -653,16 +744,16 @@ export default function DatabaseValidationPage() {
                     </CardContent></Card>
                 )}
 
-                <Card><CardHeader><CardTitle className="text-lg">Database Connection</CardTitle></CardHeader>
+                <Card><CardHeader><CardTitle className="text-lg">Target Database Connection</CardTitle></CardHeader>
                 <CardContent>
                     <p className={cn(testDbResult.dbConnectionStatus === 'success' ? "text-green-600" : "text-red-600")}>
-                        DB Connection: <span className="font-semibold">{testDbResult.dbConnectionStatus.toUpperCase()}</span>
+                        Status: <span className="font-semibold">{testDbResult.dbConnectionStatus.toUpperCase()}</span>
                         {testDbResult.dbConnectionError && <span className="ml-2 text-sm">({testDbResult.dbConnectionError})</span>}
                     </p>
                 </CardContent></Card>
                 
                 {testDbResult.validationStepResults && testDbResult.validationStepResults.length > 0 && (
-                     <Card><CardHeader><CardTitle className="text-lg">Validation Steps</CardTitle></CardHeader>
+                     <Card><CardHeader><CardTitle className="text-lg">Target DB Validation Steps</CardTitle></CardHeader>
                      <CardContent className="space-y-2">
                     {testDbResult.validationStepResults.map((step, idx) => (
                         <Card key={`val-${idx}`} className="overflow-hidden">
