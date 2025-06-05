@@ -298,8 +298,8 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
   return output;
 }
 
-// Internal flow definition - not exported
-export const testDbValidationInternalFlow = {
+// Internal flow definition - NOT EXPORTED to fix Next.js error
+const testDbValidationInternalFlow = {
   name: 'testDbValidationInternalFlow',
   inputSchema: TestDbValidationInputSchema,
   outputSchema: TestDbValidationOutputSchema,
