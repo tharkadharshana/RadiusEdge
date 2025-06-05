@@ -26,7 +26,7 @@ import { dbService, sshService } from '@/lib/services';
 
 // --- Input Schemas ---
 // Schema for individual SSH preamble steps for the direct test (run on Jump Server or directly on DB host)
-export const DbSshPreambleStepConfigClientSchema = z.object({ // Exported for page.tsx
+export const DbSshPreambleStepConfigClientSchema = z.object({
   id: z.string(),
   name: z.string().describe('User-defined name of the SSH preamble step.'),
   command: z.string().describe('The SSH command to execute.'),
@@ -37,7 +37,7 @@ export type DbSshPreambleStepConfigClient = z.infer<typeof DbSshPreambleStepConf
 
 
 // Schema for individual validation steps provided by the client for direct DB testing.
-export const DbValidationStepClientSchema = z.object({ // Exported for page.tsx
+export const DbValidationStepClientSchema = z.object({
   name: z.string().describe('User-defined name of the validation step.'),
   type: z.enum(['sql', 'ssh']).describe('Type of validation step: SQL query or SSH command on DB host.'),
   commandOrQuery: z.string().describe('The SQL query or SSH command to execute.'),
@@ -88,24 +88,21 @@ export type StepResult = z.infer<typeof StepResultSchema>;
 const TestDbValidationOutputSchema = z.object({
   overallStatus: z.enum([
     'success', 'partial_success',
-    'jump_server_connection_failure', 'preamble_failure', // preamble_failure now refers to jump server preamble
-    'connection_failure', // DB connection failure
+    'jump_server_connection_failure', 'preamble_failure',
+    'connection_failure',
     'validation_failure', 'testing'
   ]),
   jumpServerConnectionResult: StepResultSchema.optional(),
-  directTestSshPreambleResults: z.array(StepResultSchema).optional(), // For commands run on Jump Server
-  dbConnectionStatus: z.enum(['success', 'failure', 'skipped']), // Target DB connection status
+  directTestSshPreambleResults: z.array(StepResultSchema).optional(),
+  dbConnectionStatus: z.enum(['success', 'failure', 'skipped']),
   dbConnectionError: z.string().optional(),
-  validationStepResults: z.array(StepResultSchema), // For SQL/SSH steps against target DB
+  validationStepResults: z.array(StepResultSchema),
 });
 export type TestDbValidationOutput = z.infer<typeof TestDbValidationOutputSchema>;
 
 
-// REAL_IMPLEMENTATION_NOTE: This function would be part of a backend service.
-// It would require SSH libraries (e.g., ssh2 for Node.js) and DB client libraries.
-// For this simulation, it uses a mocked sshService and dbService.
 async function executeSshCommandStep(
-  stepConfig: DbSshPreambleStepConfigClient | DbValidationStepClient, // Can be preamble or SSH validation step
+  stepConfig: DbSshPreambleStepConfigClient | DbValidationStepClient,
   targetHostInfo: { host: string; port?: number; user?: string; privateKey?: string; password?: string; authMethod?: 'key' | 'password' },
   stepType: 'ssh_preamble' | 'ssh_validation'
 ): Promise<StepResult> {
@@ -115,17 +112,15 @@ async function executeSshCommandStep(
       type: stepType, command: 'command' in stepConfig ? stepConfig.command : stepConfig.commandOrQuery,
     };
   }
-  console.log(`[TEST_DB_SSH] Executing SSH step: ${stepConfig.name} on host ${targetHostInfo.host}`);
+  console.log(`[TEST_DB_SSH] Simulating SSH step: ${stepConfig.name} on host ${targetHostInfo.host}`);
   try {
-    // REAL_IMPLEMENTATION_NOTE: A real backend would connect to targetHostInfo.host for these commands.
     if (!sshService.isConnected() || sshService.getConnectionConfig()?.host !== targetHostInfo.host) {
         await sshService.connect({
             host: targetHostInfo.host,
             port: targetHostInfo.port || 22,
-            username: targetHostInfo.user || 'root',
+            username: targetHostInfo.user || 'root', // Default user if not provided
             privateKey: targetHostInfo.privateKey,
             password: targetHostInfo.password,
-            // authMethod implicitly handled by sshService if privateKey or password is set
         });
     }
     const commandToRun = 'command' in stepConfig ? stepConfig.command : stepConfig.commandOrQuery;
@@ -150,10 +145,8 @@ async function executeSshCommandStep(
   }
 }
 
-// Simulates the execution of a single DB validation step (SQL only here, SSH validation uses executeSshCommandStep).
-// REAL_IMPLEMENTATION_NOTE: This function would be replaced by actual backend logic.
 async function executeSqlValidationStep(
-  stepConfig: DbValidationStepClient, // Assumes type is 'sql'
+  stepConfig: DbValidationStepClient,
 ): Promise<StepResult> {
   if (!stepConfig.isEnabled) {
     return {
@@ -161,7 +154,6 @@ async function executeSqlValidationStep(
       type: 'sql_validation', query: stepConfig.commandOrQuery,
     };
   }
-  // dbService.connect is called once before all SQL validation steps.
   try {
     const result = await dbService.executeQuery(stepConfig.commandOrQuery);
     const success = !result.error &&
@@ -182,22 +174,19 @@ async function executeSqlValidationStep(
   }
 }
 
-
 export async function testDbValidation(input: TestDbValidationInput): Promise<TestDbValidationOutput> {
   const output: TestDbValidationOutput = {
     overallStatus: 'testing',
-    dbConnectionStatus: 'skipped', // Target DB connection
+    dbConnectionStatus: 'skipped',
     validationStepResults: [],
     directTestSshPreambleResults: [],
   };
   let jumpPreambleSuccessful = true;
 
   try {
-    // 1. Simulate Connection to Jump Server (if configured)
     if (input.jumpServerHost && input.jumpServerUser) {
       console.log(`[TEST_DB] Simulating SSH connection to Jump Server: ${input.jumpServerUser}@${input.jumpServerHost}:${input.jumpServerPort || 22}`);
       try {
-        // REAL_IMPLEMENTATION_NOTE: Actual SSH connection to jump server
         await sshService.connect({
             host: input.jumpServerHost,
             port: input.jumpServerPort || 22,
@@ -220,29 +209,28 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
         };
         output.overallStatus = 'jump_server_connection_failure';
         console.error("[TEST_DB] Jump Server connection failed (simulated):", jumpError.message);
-        return output; // Early exit
+        return output;
       }
     } else {
         console.log("[TEST_DB] No Jump Server configured, proceeding with direct/local preamble if any.");
     }
 
-    // 2. Execute Direct Test SSH Preamble Steps (on Jump Server or directly on DB host if no jump server)
     if (input.directTestSshPreamble && input.directTestSshPreamble.length > 0) {
-      const sshTargetHost = input.jumpServerHost || input.dbHost; // Preamble runs on jump server if specified, else on DB host
-      const sshTargetPort = input.jumpServerHost ? input.jumpServerPort : 22; // Assuming DB host SSH is on 22 if no jump
-      const sshTargetUser = input.jumpServerHost ? input.jumpServerUser : input.dbUsername; // Or a dedicated SSH user for DB host
-      const sshTargetPrivateKey = input.jumpServerHost ? input.jumpServerPrivateKey : undefined; // Specific key for DB host SSH?
+      const sshTargetHost = input.jumpServerHost || input.dbHost;
+      const sshTargetPort = input.jumpServerHost ? input.jumpServerPort : 22;
+      const sshTargetUser = input.jumpServerHost ? input.jumpServerUser : input.dbUsername;
+      const sshTargetPrivateKey = input.jumpServerHost ? input.jumpServerPrivateKey : undefined;
       const sshTargetPassword = input.jumpServerHost ? input.jumpServerPassword : undefined;
       const sshTargetAuthMethod = input.jumpServerHost ? input.jumpServerAuthMethod : undefined;
 
-
-      console.log(`[TEST_DB] Starting SSH Preamble execution on ${sshTargetHost}...`);
+      console.log(`[TEST_DB] Simulating SSH Preamble execution on ${sshTargetHost}...`);
+      output.directTestSshPreambleResults = []; // Initialize array
       for (const preambleStep of input.directTestSshPreamble) {
         const result = await executeSshCommandStep(preambleStep, {
             host: sshTargetHost, port: sshTargetPort, user: sshTargetUser,
             privateKey: sshTargetPrivateKey, password: sshTargetPassword, authMethod: sshTargetAuthMethod
         }, 'ssh_preamble');
-        output.directTestSshPreambleResults!.push(result);
+        output.directTestSshPreambleResults.push(result);
         if (result.status === 'failure') {
           jumpPreambleSuccessful = false;
           console.log(`[TEST_DB] SSH Preamble step "${preambleStep.name}" failed. Halting further execution.`);
@@ -260,18 +248,13 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
             });
           }
         });
-        return output; // Early exit if preamble fails
+        return output;
       }
-      console.log("[TEST_DB] SSH Preamble completed successfully.");
+      console.log("[TEST_DB] SSH Preamble completed successfully (simulated).");
     } else {
-        jumpPreambleSuccessful = true; // No preamble steps, so considered successful
+        jumpPreambleSuccessful = true;
     }
 
-
-    // 3. Try to connect to the target database
-    // REAL_IMPLEMENTATION_NOTE: A real backend service would handle this DB connection.
-    // If a jump server was used, this connection happens *from* the jump server (e.g., via an SSH tunnel
-    // established by preamble steps, or if the DB is directly reachable from jump server).
     console.log(`[TEST_DB] Simulating connection to Target DB: ${input.dbType} at ${input.dbHost}:${input.dbPort} (database: ${input.dbName})`);
     await dbService.connect({
       type: input.dbType, host: input.dbHost, port: input.dbPort,
@@ -280,10 +263,10 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
     output.dbConnectionStatus = 'success';
     console.log("[TEST_DB] Target Database connection successful (simulated).");
 
-    // 4. Execute validation steps
     let haltValidation = false;
     if (input.validationSteps && input.validationSteps.length > 0) {
-      console.log("[TEST_DB] Starting target DB validation steps execution...");
+      console.log("[TEST_DB] Simulating target DB validation steps execution...");
+      output.validationStepResults = []; // Initialize array
       for (const stepConfig of input.validationSteps) {
         if (haltValidation) {
           output.validationStepResults.push({
@@ -296,10 +279,7 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
         let result: StepResult;
         if (stepConfig.type === 'sql') {
             result = await executeSqlValidationStep(stepConfig);
-        } else { // 'ssh'
-            // REAL_IMPLEMENTATION_NOTE: SSH validation steps target the DB host.
-            // If jump server is used, this SSH connection must be routed through/from jump server.
-            // For simulation, we'll connect directly to dbHost, assuming it's reachable.
+        } else {
             result = await executeSshCommandStep(stepConfig, { host: input.dbHost, user: input.dbUsername, password: input.dbPassword }, 'ssh_validation');
         }
         output.validationStepResults.push(result);
@@ -309,7 +289,6 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
       }
     }
 
-    // 5. Determine overall status
     const hasValidationFailures = output.validationStepResults.some(r => r.status === 'failure');
     const hasValidationSuccess = output.validationStepResults.some(r => r.status === 'success');
 
@@ -319,23 +298,23 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
       output.overallStatus = 'success';
     }
 
-  } catch (error: unknown) { // This catch block is primarily for Target DB connection errors now
+  } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     output.dbConnectionStatus = 'failure';
     output.dbConnectionError = errorMessage;
     output.overallStatus = 'connection_failure';
     console.error("[TEST_DB] Target Database connection or flow error (simulated):", errorMessage);
 
-    // Skip validation steps if DB connection failed
     if (input.validationSteps && input.validationSteps.length > 0) {
-      input.validationSteps.forEach(stepConfig => {
-        if (stepConfig.isEnabled) {
-          output.validationStepResults.push({
-            stepName: stepConfig.name, status: 'skipped', output: 'Skipped due to DB connection failure.',
-            type: stepConfig.type === 'sql' ? 'sql_validation' : 'ssh_validation',
-            ...(stepConfig.type === 'sql' ? { query: stepConfig.commandOrQuery } : { command: stepConfig.commandOrQuery }),
-          });
-        }
+        output.validationStepResults = output.validationStepResults || []; // Ensure array is initialized
+        input.validationSteps.forEach(stepConfig => {
+            if (stepConfig.isEnabled && !output.validationStepResults.find(r => r.stepName === stepConfig.name)) { // Avoid duplicates
+                output.validationStepResults.push({
+                stepName: stepConfig.name, status: 'skipped', output: 'Skipped due to DB connection failure.',
+                type: stepConfig.type === 'sql' ? 'sql_validation' : 'ssh_validation',
+                ...(stepConfig.type === 'sql' ? { query: stepConfig.commandOrQuery } : { command: stepConfig.commandOrQuery }),
+                });
+            }
       });
     }
   } finally {
@@ -347,15 +326,17 @@ export async function testDbValidation(input: TestDbValidationInput): Promise<Te
       console.error('[TEST_DB] Error disconnecting services (simulated):', disconnectError);
     }
   }
-
   return output;
 }
 
-// This object should NOT be exported if this file is marked with 'use server'
-const testDbValidationInternalFlow = {
-  name: 'testDbValidationInternalFlow',
+// This object is NOT exported. It was previously a source of error.
+const localFlowDefinitionHelper = {
+  name: 'localTestDbValidationFlowDefinition',
   inputSchema: TestDbValidationInputSchema,
   outputSchema: TestDbValidationOutputSchema,
   execute: testDbValidation,
 };
+
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
+// Ensure no trailing characters or comments beyond this point.
+    
