@@ -79,10 +79,11 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
     {
       name: 'server_configs',
       sql: `CREATE TABLE IF NOT EXISTS server_configs (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, host TEXT,
+              id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, customServerType TEXT, host TEXT,
               sshPort INTEGER, sshUser TEXT, authMethod TEXT, privateKey TEXT, password TEXT,
               radiusAuthPort INTEGER, radiusAcctPort INTEGER, defaultSecret TEXT,
-              nasSpecificSecrets TEXT, status TEXT, testSteps TEXT, scenarioExecutionSshCommands TEXT
+              nasSpecificSecrets TEXT, status TEXT, testSteps TEXT, 
+              scenarioExecutionSshCommands TEXT, connectionTestSshPreamble TEXT
             );`
     },
     {
@@ -90,7 +91,7 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       sql: `CREATE TABLE IF NOT EXISTS db_configs (
               id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, host TEXT, port INTEGER,
               username TEXT, password TEXT, databaseName TEXT, status TEXT,
-              sshPreambleSteps TEXT, validationSteps TEXT
+              sshPreambleSteps TEXT, validationSteps TEXT, directTestSshPreamble TEXT
             );`
     },
     {
@@ -143,6 +144,30 @@ async function initializeDatabaseSchema(db: Database): Promise<void> {
       console_log_error(`Error ensuring table '${table.name}' exists:`, err.message, err.stack);
     }
   }
+  
+  // Check and potentially add new columns to existing tables if they don't exist
+  const columnsToAdd = [
+    { table: 'server_configs', column: 'customServerType', type: 'TEXT' },
+    { table: 'server_configs', column: 'connectionTestSshPreamble', type: 'TEXT' },
+    { table: 'db_configs', column: 'directTestSshPreamble', type: 'TEXT' },
+  ];
+
+  for (const item of columnsToAdd) {
+    try {
+      const columnsPragma = await db.all(`PRAGMA table_info(${item.table});`);
+      const columnExists = columnsPragma.some(col => (col as any).name === item.column);
+      if (!columnExists) {
+        console_log_warn(`DB_SCHEMA_MIGRATE: Column '${item.column}' NOT FOUND in '${item.table}' table. Attempting to ADD it...`);
+        await db.exec(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.type};`);
+        console_log_info(`DB_SCHEMA_MIGRATE: Column '${item.column}' ADDED to '${item.table}' table.`);
+      } else {
+        console_log_info(`DB_SCHEMA_MIGRATE: Column '${item.column}' already exists in '${item.table}' table.`);
+      }
+    } catch (alterError: any) {
+      console_log_error(`DB_SCHEMA_MIGRATE: FAILED to ALTER '${item.table}' table for column '${item.column}':`, alterError.message);
+    }
+  }
+
 
   // Dictionaries Table - Specific robust check and creation/alteration for exampleAttributes
   console_log_info("DICTIONARIES_TABLE_CHECK: Starting schema check for 'dictionaries' table and 'exampleAttributes' column...");

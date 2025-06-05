@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from 'react'; // Added useEffect
+import { useState, useEffect } from 'react'; 
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,7 +34,6 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { testDbValidation, TestDbValidationInput, TestDbValidationOutput, DbValidationStepClient } from '@/ai/flows/test-db-validation-flow';
 
-// Type definitions (ensure these match your backend expectations if they differ)
 export type DbStatus = 'connected_validated' | 'connected_issues' | 'connection_error' | 'validation_error' | 'unknown' | 'testing';
 
 export interface DbSshPreambleStepConfig { 
@@ -65,14 +64,18 @@ export interface DbConnectionConfig {
   password?: string; 
   databaseName: string;
   status?: DbStatus;
-  sshPreambleSteps: DbSshPreambleStepConfig[];
+  sshPreambleSteps: DbSshPreambleStepConfig[]; // For scenarios
+  directTestSshPreamble?: DbSshPreambleStepConfig[]; // For direct "Test Connection"
   validationSteps: DbValidationStepConfig[];
 }
 
-// Default creation functions remain the same
 const getDefaultDbSshPreamble = (): DbSshPreambleStepConfig[] => [
-    { id: `db_ssh_pre_${Date.now()}`, name: 'Example: Connect to DB Bastion', command: 'ssh user@db-bastion.example.com', isEnabled: false, expectedOutputContains: "Connected to db-bastion" },
+    { id: `db_ssh_pre_scenario_${Date.now()}`, name: 'Example: Connect to DB Bastion (Scenario)', command: 'ssh user@db-bastion.example.com', isEnabled: false, expectedOutputContains: "Connected to db-bastion" },
 ];
+const getDefaultDirectTestSshPreamble = (): DbSshPreambleStepConfig[] => [
+    { id: `db_ssh_pre_direct_test_${Date.now()}`, name: 'Example: Pre-DB Test SSH Command', command: 'echo "Preamble for DB test"', isEnabled: false, expectedOutputContains: "Preamble for DB test" },
+];
+
 
 const getDefaultDbValidationSteps = (): DbValidationStepConfig[] => [
   { id: `db_val_default_${Date.now()}_1`, name: 'Check Users Table Exists', type: 'sql', commandOrQuery: "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'users_example';", isEnabled: true, isMandatory: true, expectedOutputContains: "1" },
@@ -84,8 +87,8 @@ export default function DatabaseValidationPage() {
   const [configs, setConfigs] = useState<DbConnectionConfig[]>([]);
   const [editingConfig, setEditingConfig] = useState<DbConnectionConfig | null>(null);
   
-  const [isLoading, setIsLoading] = useState(true); // For initial load
-  const [isSaving, setIsSaving] = useState(false); // For save operations
+  const [isLoading, setIsLoading] = useState(true); 
+  const [isSaving, setIsSaving] = useState(false); 
 
   const [testingDbId, setTestingDbId] = useState<string | null>(null);
   const [testDbResult, setTestDbResult] = useState<TestDbValidationOutput | null>(null);
@@ -155,7 +158,7 @@ export default function DatabaseValidationPage() {
 
   const handleDeleteConfig = async (configId: string) => {
     if (!window.confirm("Are you sure you want to delete this database configuration?")) return;
-    setIsLoading(true); // Can use a more specific deleting state if needed
+    setIsLoading(true); 
 
     try {
       const response = await fetch(`/api/settings/database/${configId}`, { method: 'DELETE' });
@@ -185,37 +188,47 @@ export default function DatabaseValidationPage() {
       databaseName: '',
       status: 'unknown',
       sshPreambleSteps: getDefaultDbSshPreamble(),
+      directTestSshPreamble: getDefaultDirectTestSshPreamble(),
       validationSteps: getDefaultDbValidationSteps(),
     });
   };
 
-  // SshPreambleStep and ValidationStep change handlers remain the same
-  const handleSshPreambleStepChange = (index: number, field: keyof DbSshPreambleStepConfig, value: any) => {
+  // Generic SshPreambleStepConfig handler for both preamble lists
+  const handleDbSshPreambleStepChange = (
+    listName: 'sshPreambleSteps' | 'directTestSshPreamble',
+    index: number,
+    field: keyof DbSshPreambleStepConfig,
+    value: any
+  ) => {
     if (editingConfig) {
-      const updatedSteps = [...editingConfig.sshPreambleSteps];
+      const currentList = editingConfig[listName] || [];
+      const updatedSteps = [...currentList];
       if (field === 'isEnabled') {
         (updatedSteps[index] as any)[field] = Boolean(value);
       } else {
         (updatedSteps[index] as any)[field] = value;
       }
-      setEditingConfig({ ...editingConfig, sshPreambleSteps: updatedSteps });
+      setEditingConfig({ ...editingConfig, [listName]: updatedSteps });
     }
   };
 
-  const addSshPreambleStep = () => {
+  const addDbSshPreambleStep = (listName: 'sshPreambleSteps' | 'directTestSshPreamble') => {
     if (editingConfig) {
       const newStep: DbSshPreambleStepConfig = {
-        id: `db_ssh_pre_custom_${Date.now()}`, name: 'New Scenario SSH Step', command: '', isEnabled: true, expectedOutputContains: ''
+        id: `db_ssh_custom_${listName}_${Date.now()}`, name: 'New SSH Step', command: '', isEnabled: true, expectedOutputContains: ''
       };
-      setEditingConfig({ ...editingConfig, sshPreambleSteps: [...editingConfig.sshPreambleSteps, newStep] });
+      const currentList = editingConfig[listName] || [];
+      setEditingConfig({ ...editingConfig, [listName]: [...currentList, newStep] });
     }
   };
 
-  const removeSshPreambleStep = (index: number) => {
+  const removeDbSshPreambleStep = (listName: 'sshPreambleSteps' | 'directTestSshPreamble', index: number) => {
     if (editingConfig) {
-      setEditingConfig({ ...editingConfig, sshPreambleSteps: editingConfig.sshPreambleSteps.filter((_, i) => i !== index) });
+      const currentList = editingConfig[listName] || [];
+      setEditingConfig({ ...editingConfig, [listName]: currentList.filter((_, i) => i !== index) });
     }
   };
+
 
   const handleValidationStepChange = (index: number, field: keyof DbValidationStepConfig, value: any) => {
     if (editingConfig) {
@@ -224,8 +237,8 @@ export default function DatabaseValidationPage() {
         (updatedSteps[index] as any)[field] = Boolean(value);
       } else if (field === 'type') {
          (updatedSteps[index] as any)[field] = value;
-         updatedSteps[index].commandOrQuery = ""; // Reset command/query on type change
-         updatedSteps[index].expectedOutputContains = ""; // Reset expected output on type change
+         updatedSteps[index].commandOrQuery = ""; 
+         updatedSteps[index].expectedOutputContains = ""; 
       }
       else {
         (updatedSteps[index] as any)[field] = value;
@@ -266,6 +279,11 @@ export default function DatabaseValidationPage() {
         const validationClientSteps: DbValidationStepClient[] = configToTest.validationSteps.map(s => ({
             name: s.name, type: s.type, commandOrQuery: s.commandOrQuery, isEnabled: s.isEnabled, isMandatory: s.isMandatory, expectedOutputContains: s.expectedOutputContains
         }));
+        
+        const directTestPreambleClientSteps: DbSshPreambleStepConfig[] | undefined = configToTest.directTestSshPreamble?.map(s => ({
+            id: s.id, name: s.name, command: s.command, isEnabled: s.isEnabled, expectedOutputContains: s.expectedOutputContains
+        }));
+
 
         const input: TestDbValidationInput = {
             id: configToTest.id,
@@ -275,6 +293,7 @@ export default function DatabaseValidationPage() {
             dbUsername: configToTest.username,
             dbPassword: configToTest.password || '', 
             dbName: configToTest.databaseName,
+            directTestSshPreamble: directTestPreambleClientSteps,
             validationSteps: validationClientSteps,
         };
         const result = await testDbValidation(input);
@@ -286,7 +305,6 @@ export default function DatabaseValidationPage() {
         else if (result.overallStatus === 'connection_failure') newStatus = 'connection_error';
         else if (result.overallStatus === 'validation_failure') newStatus = 'validation_error';
         
-        // Update the config with the new status and save it to backend
         const updatedConfigForSave = { ...configToTest, status: newStatus };
         const response = await fetch(`/api/settings/database/${configToTest.id}`, {
             method: 'PUT',
@@ -304,10 +322,8 @@ export default function DatabaseValidationPage() {
     } catch (error) {
         console.error("Error testing DB connection/validation or saving:", error);
         setTestDbError(error instanceof Error ? error.message : "An unknown error occurred during the DB test.");
-        setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: configToTest.status || 'unknown' } : c)); // Revert to original or unknown
+        setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: configToTest.status || 'unknown' } : c)); 
         toast({ title: "DB Test Failed", description: (error as Error).message || "Could not run the DB connection/validation test.", variant: "destructive" });
-    } finally {
-        // No longer setting testingDbId to null here, result dialog handles its own visibility
     }
   };
 
@@ -322,12 +338,84 @@ export default function DatabaseValidationPage() {
     }
   };
 
+  const renderDbSshPreambleList = (
+    listName: 'sshPreambleSteps' | 'directTestSshPreamble',
+    title: string,
+    description: string
+  ) => (
+    <fieldset className="border p-4 rounded-md">
+        <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
+            <span>{title}</span>
+            <Button variant="outline" size="sm" onClick={() => addDbSshPreambleStep(listName)} className="ml-auto" disabled={isSaving}>
+                <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Step
+            </Button>
+        </legend>
+        <p className="text-xs text-muted-foreground mt-1 mb-3">{description}</p>
+        <div className="space-y-3">
+            {(editingConfig?.[listName] || []).map((step, index) => (
+                <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 flex-grow">
+                            <Terminal className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                            <Input
+                                value={step.name}
+                                onChange={(e) => handleDbSshPreambleStepChange(listName, index, 'name', e.target.value)}
+                                className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
+                                placeholder="SSH Step Name"
+                                disabled={isSaving}
+                            />
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                            <Switch
+                                id={`${listName}-enabled-${index}`}
+                                checked={step.isEnabled}
+                                onCheckedChange={(checked) => handleDbSshPreambleStepChange(listName, index, 'isEnabled', checked)}
+                                aria-label="Enable SSH step"
+                                disabled={isSaving}
+                            />
+                            <Button variant="ghost" size="icon" onClick={() => removeDbSshPreambleStep(listName, index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}>
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    </div>
+                    <div>
+                        <Label htmlFor={`${listName}-cmd-${index}`} className="text-xs text-muted-foreground">SSH Command</Label>
+                        <Textarea
+                            id={`${listName}-cmd-${index}`}
+                            value={step.command}
+                            onChange={(e) => handleDbSshPreambleStepChange(listName, index, 'command', e.target.value)}
+                            rows={1}
+                            className="font-mono text-xs mt-1"
+                            placeholder="e.g., ssh user@bastion.example.com"
+                            disabled={isSaving}
+                        />
+                    </div>
+                    <div className="mt-2">
+                        <Label htmlFor={`${listName}-expect-${index}`} className="text-xs text-muted-foreground">Expected Output Contains (Optional)</Label>
+                        <Input
+                            id={`${listName}-expect-${index}`}
+                            value={step.expectedOutputContains || ''}
+                            onChange={(e) => handleDbSshPreambleStepChange(listName, index, 'expectedOutputContains', e.target.value)}
+                            className="font-mono text-xs mt-1"
+                            placeholder="e.g., 'Connection established' or 'Login successful'"
+                            disabled={isSaving}
+                        />
+                    </div>
+                </Card>
+            ))}
+            {(editingConfig?.[listName]?.length === 0) && (
+                <p className="text-sm text-muted-foreground text-center py-2">No SSH preamble steps defined for this section.</p>
+            )}
+        </div>
+    </fieldset>
+  );
+
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Database Validation Setup"
-        description="Configure DB connections for result validation. Scenario SSH preambles are for scenario execution."
+        description="Configure DB connections for result validation. Scenario SSH preambles are for scenario execution. Direct Test SSH Preambles run before 'Test Connection & Validation'."
         actions={
           <Button onClick={createNewConfig} disabled={isLoading || isSaving}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add DB Connection
@@ -401,7 +489,6 @@ export default function DatabaseValidationPage() {
         </CardContent>
       </Card>
 
-      {/* DB Config Editor Dialog */}
       <Dialog open={!!editingConfig} onOpenChange={(isOpen) => !isOpen && handleEditConfig(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -410,7 +497,7 @@ export default function DatabaseValidationPage() {
                 {editingConfig?.id === 'new' ? 'Add New Database Connection' : `Edit Connection: ${editingConfig?.name}`}
             </DialogTitle>
             <DialogDescription>
-              Configure DB details. The Validation Sequence tests the DB directly. Scenario SSH Preamble is for use by scenarios.
+              Configure DB details.
             </DialogDescription>
           </DialogHeader>
           {editingConfig && (
@@ -458,28 +545,17 @@ export default function DatabaseValidationPage() {
                 </div>
               </fieldset>
 
-              <fieldset className="border p-4 rounded-md">
-                <legend className="text-sm font-medium px-1">Scenario SSH Preamble (Simulated - for scenarios using this DB)</legend>
-                <p className="text-xs text-muted-foreground mt-1 mb-3">Define SSH commands to run before scenarios access this database (e.g., for bastion hosts, tunnels). Not used by 'Test Connection & Validation'.</p>
-                <div className="space-y-3">
-                  {(editingConfig.sshPreambleSteps || []).map((step, index) => (
-                    <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
-                      <div className="flex items-center justify-between mb-2">
-                        <Input value={step.name} onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)} className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0" placeholder="Preamble Step Name" disabled={isSaving}/>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <Switch id={`preamble-enabled-${index}`} checked={step.isEnabled} onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)} aria-label="Enable preamble step" disabled={isSaving}/>
-                          <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}><Trash2 className="h-4 w-4" /></Button>
-                        </div>
-                      </div>
-                      <Label htmlFor={`preamble-cmd-${index}`} className="text-xs text-muted-foreground">SSH Command</Label>
-                      <Textarea id={`preamble-cmd-${index}`} value={step.command} onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)} rows={1} className="font-mono text-xs mt-1" placeholder="e.g., ssh user@bastion.example.com" disabled={isSaving}/>
-                      <Label htmlFor={`preamble-expect-${index}`} className="text-xs text-muted-foreground mt-2">Expected Output Contains (Optional)</Label>
-                      <Input id={`preamble-expect-${index}`} value={step.expectedOutputContains || ''} onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)} className="font-mono text-xs mt-1" placeholder="e.g., 'Connection established'" disabled={isSaving}/>
-                    </Card>
-                  ))}
-                  <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="w-full" disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add Scenario SSH Step</Button>
-                </div>
-              </fieldset>
+              {renderDbSshPreambleList(
+                'directTestSshPreamble',
+                'Direct Test SSH Preamble (Simulated)',
+                "SSH commands to run *before* the 'Test Connection & Validation' sequence (e.g., for SSH tunnels to the DB host). Uses DB host for SSH if details not in command."
+              )}
+              
+              {renderDbSshPreambleList(
+                'sshPreambleSteps',
+                'Scenario SSH Preamble (Simulated)',
+                "SSH commands to run *before* scenarios access this database (e.g., for bastion hosts, tunnels). Not used by 'Test Connection & Validation'."
+              )}
               
               <fieldset className="border p-4 rounded-md">
                 <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
@@ -489,6 +565,9 @@ export default function DatabaseValidationPage() {
                         <Button variant="outline" size="sm" onClick={() => addValidationStep('ssh')} disabled={isSaving}><PlusCircle className="mr-2 h-4 w-4" /> Add SSH (DB Host) Step</Button>
                     </div>
                 </legend>
+                <p className="text-xs text-muted-foreground mt-1 mb-3">
+                    Define SQL queries or SSH commands (on the DB host) to verify DB state. Runs *after* Direct Test SSH Preamble (if any) and successful DB connection.
+                </p>
                 <div className="space-y-3 mt-3">
                   {editingConfig.validationSteps.map((step, index) => (
                     <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
@@ -523,7 +602,6 @@ export default function DatabaseValidationPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Test DB Validation Result Dialog */}
       <Dialog open={!!(testingDbId && (testDbResult || testDbError))} onOpenChange={(isOpen) => {
         if (!isOpen) { setTestingDbId(null); setTestDbResult(null); setTestDbError(null); }
       }}>
@@ -552,6 +630,28 @@ export default function DatabaseValidationPage() {
                     (testDbResult.overallStatus === 'connection_failure' || testDbResult.overallStatus === 'validation_failure') && 'bg-red-500 hover:bg-red-600 text-destructive-foreground',
                     testDbResult.overallStatus === 'partial_success' && 'bg-yellow-500 hover:bg-yellow-600 text-primary-foreground'
                 )}>{testDbResult.overallStatus.replace(/_/g, ' ').toUpperCase()}</Badge></div>
+                
+                {/* Display Direct Test SSH Preamble Results if available */}
+                {testDbResult.directTestSshPreambleResults && testDbResult.directTestSshPreambleResults.length > 0 && (
+                     <Card><CardHeader><CardTitle className="text-lg">Direct Test SSH Preamble Steps</CardTitle></CardHeader>
+                     <CardContent className="space-y-2">
+                    {testDbResult.directTestSshPreambleResults.map((step, idx) => (
+                        <Card key={`preamble-${idx}`} className="overflow-hidden">
+                            <CardHeader className={cn("p-3 flex flex-row items-center justify-between", step.status === 'success' && 'bg-green-500/10', step.status === 'failure' && 'bg-red-500/10', step.status === 'skipped' && 'bg-gray-500/10')}>
+                                <div className="flex items-center gap-2"><h4 className="font-medium">{step.stepName} <Badge variant="outline" className="text-xs">SSH</Badge></h4></div>
+                                <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600 text-primary-foreground', step.status === 'failure' && 'bg-red-600 text-destructive-foreground')}>{step.status}</Badge>
+                            </CardHeader>
+                            {(step.output || step.error || step.command) && 
+                                <CardContent className="p-3 text-xs bg-muted/30">
+                                    <p className="text-muted-foreground font-mono mb-1">Command: <code className="text-foreground bg-background/50 px-1 rounded">{step.command}</code></p>
+                                    {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
+                                    {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 bg-red-500/10 p-2 rounded mt-1">{step.error}</pre>}
+                                </CardContent>
+                            }
+                        </Card>
+                    ))}
+                    </CardContent></Card>
+                )}
 
                 <Card><CardHeader><CardTitle className="text-lg">Database Connection</CardTitle></CardHeader>
                 <CardContent>
@@ -594,3 +694,4 @@ export default function DatabaseValidationPage() {
   );
 }
 
+    

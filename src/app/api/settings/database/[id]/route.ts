@@ -2,7 +2,7 @@
 // src/app/api/settings/database/[id]/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
-import type { DbConnectionConfig, DbSshPreambleStepConfig, DbValidationStepConfig } from '@/app/settings/database/page'; // Assuming types are exported
+import type { DbConnectionConfig } from '@/app/settings/database/page'; 
 
 interface Params {
   id: string;
@@ -32,6 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
     const config: DbConnectionConfig = {
       ...configFromDb,
       sshPreambleSteps: parseJsonField(configFromDb.sshPreambleSteps, []),
+      directTestSshPreamble: parseJsonField(configFromDb.directTestSshPreamble, []),
       validationSteps: parseJsonField(configFromDb.validationSteps, []),
       port: Number(configFromDb.port),
     } as DbConnectionConfig;
@@ -64,13 +65,14 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       databaseName: body.databaseName || existingConfig.databaseName,
       status: body.status !== undefined ? body.status : existingConfig.status,
       sshPreambleSteps: body.sshPreambleSteps !== undefined ? JSON.stringify(body.sshPreambleSteps) : existingConfig.sshPreambleSteps,
+      directTestSshPreamble: body.directTestSshPreamble !== undefined ? JSON.stringify(body.directTestSshPreamble) : existingConfig.directTestSshPreamble,
       validationSteps: body.validationSteps !== undefined ? JSON.stringify(body.validationSteps) : existingConfig.validationSteps,
     };
 
     const result = await db.run(
       `UPDATE db_configs SET 
         name = ?, type = ?, host = ?, port = ?, username = ?, password = ?, 
-        databaseName = ?, status = ?, sshPreambleSteps = ?, validationSteps = ?
+        databaseName = ?, status = ?, sshPreambleSteps = ?, directTestSshPreamble = ?, validationSteps = ?
       WHERE id = ?`,
       updatedConfigData.name,
       updatedConfigData.type,
@@ -81,6 +83,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       updatedConfigData.databaseName,
       updatedConfigData.status,
       updatedConfigData.sshPreambleSteps,
+      updatedConfigData.directTestSshPreamble,
       updatedConfigData.validationSteps,
       params.id
     );
@@ -97,6 +100,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const configToReturn: DbConnectionConfig = {
       ...updatedConfigFromDb,
       sshPreambleSteps: parseJsonField(updatedConfigFromDb.sshPreambleSteps, []),
+      directTestSshPreamble: parseJsonField(updatedConfigFromDb.directTestSshPreamble, []),
       validationSteps: parseJsonField(updatedConfigFromDb.validationSteps, []),
       port: Number(updatedConfigFromDb.port),
     } as DbConnectionConfig;
@@ -124,3 +128,5 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
     return NextResponse.json({ message: `Failed to delete database configuration ${params.id}`, error: (error as Error).message }, { status: 500 });
   }
 }
+
+    

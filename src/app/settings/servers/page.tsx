@@ -34,7 +34,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 
-// REAL_IMPLEMENTATION_NOTE: These types should align with your backend/API definitions.
 export type ServerStatus = 'connected' | 'disconnected' | 'unknown' | 'testing' | 'error_ssh' | 'error_config' | 'error_service' | 'issues_found';
 
 export interface TestStepConfig {
@@ -58,7 +57,8 @@ export interface SshExecutionStep {
 export interface ServerConfig {
   id: string;
   name: string;
-  type: 'freeradius' | 'custom' | 'other';
+  type: 'freeradius' | 'radiusd' | 'custom';
+  customServerType?: string;
   host: string;
   sshPort: number;
   sshUser: string;
@@ -68,23 +68,28 @@ export interface ServerConfig {
   radiusAuthPort: number;
   radiusAcctPort: number;
   defaultSecret: string;
-  nasSpecificSecrets: Record<string, string>; // Now correctly typed
-  status: ServerStatus; // Now correctly typed
+  nasSpecificSecrets: Record<string, string>;
+  status: ServerStatus;
   testSteps: TestStepConfig[];
   scenarioExecutionSshCommands: SshExecutionStep[];
+  connectionTestSshPreamble?: SshExecutionStep[];
 }
 
 const getDefaultTestSteps = (): TestStepConfig[] => [
-  { id: 'step_ssh', name: 'SSH Connection Attempt', command: 'ssh ${sshUser}@${host} -p ${sshPort} "echo SSH Connected"', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "SSH Connected" },
-  { id: 'step_radclient', name: 'Check for radclient', command: 'which radclient', isEnabled: true, isMandatory: false, type: 'default', expectedOutputContains: "/radclient" },
-  { id: 'step_radtest', name: 'Check for radtest', command: 'which radtest', isEnabled: true, isMandatory: false, type: 'default', expectedOutputContains: "/radtest" },
-  { id: 'step_config_val', name: 'Validate RADIUS Config', command: '${serverType === "freeradius" ? "freeradius" : "radiusd"} -XC', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "Configuration appears to be OK" },
-  { id: 'step_service_status', name: 'Check RADIUS Service Status', command: 'systemctl status ${serverType === "freeradius" ? "freeradius" : "radiusd"}', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "active (running)" },
+  { id: 'step_ssh', name: 'SSH Connection Attempt', command: 'echo SSH Connected', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "SSH Connected" },
+  { id: 'step_radclient', name: 'Check for radclient', command: 'command -v radclient || which radclient', isEnabled: true, isMandatory: false, type: 'default', expectedOutputContains: "radclient" },
+  { id: 'step_radtest', name: 'Check for radtest', command: 'command -v radtest || which radtest', isEnabled: true, isMandatory: false, type: 'default', expectedOutputContains: "radtest" },
+  { id: 'step_config_val', name: 'Validate RADIUS Config', command: '${serverType === "freeradius" ? "freeradius -XC 2>&1 || radiusd -XC 2>&1" : "radiusd -XC 2>&1"}', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "appears to be OK" },
+  { id: 'step_service_status', name: 'Check RADIUS Service Status', command: '${serverType === "freeradius" ? "systemctl status freeradius 2>&1 || service freeradius status 2>&1" : "systemctl status radiusd 2>&1 || service radiusd status 2>&1"}', isEnabled: true, isMandatory: true, type: 'default', expectedOutputContains: "active" },
 ];
 
 const getDefaultScenarioSshPreamble = (): SshExecutionStep[] => [
     { id: `ssh_preamble_${Date.now()}_1`, name: 'Example: Connect to Jump Host', command: 'ssh user@jump.example.com', isEnabled: false, expectedOutputContains: "Connected to jump.example.com" },
     { id: `ssh_preamble_${Date.now()}_2`, name: 'Example: SSH to Target from Jump', command: 'ssh admin@${host}', isEnabled: false, expectedOutputContains: "Connected to admin@${host}" },
+];
+
+const getDefaultConnectionTestSshPreamble = (): SshExecutionStep[] => [
+    { id: `conn_ssh_preamble_${Date.now()}`, name: 'Example: Pre-Test SSH Command', command: 'echo "Preamble for connection test"', isEnabled: false, expectedOutputContains: "Preamble for connection test" },
 ];
 
 
@@ -167,8 +172,7 @@ export default function ServerConfigPage() {
   const handleDeleteConfig = async (configId: string) => {
     if (!window.confirm("Are you sure you want to delete this server configuration?")) return;
     
-    // Consider adding a specific isDeleting state if needed for UI feedback
-    setIsLoading(true); // Re-use isLoading or add isDeleting
+    setIsLoading(true); 
     try {
       const response = await fetch(`/api/settings/servers/${configId}`, { method: 'DELETE' });
       if (!response.ok) {
@@ -181,16 +185,17 @@ export default function ServerConfigPage() {
       console.error("Error deleting server config:", error);
       toast({ title: "Error", description: (error as Error).message || "Could not delete server configuration.", variant: "destructive" });
     } finally {
-      setIsLoading(false); // Re-use isLoading or add isDeleting
+      setIsLoading(false); 
     }
   };
 
 
   const createNewConfig = () => {
     handleEditConfig({
-      id: 'new', // Temporary ID
+      id: 'new', 
       name: 'New Server Config',
       type: 'freeradius',
+      customServerType: '',
       host: '',
       sshPort: 22,
       sshUser: 'root',
@@ -204,6 +209,7 @@ export default function ServerConfigPage() {
       status: 'unknown',
       testSteps: getDefaultTestSteps(),
       scenarioExecutionSshCommands: getDefaultScenarioSshPreamble(),
+      connectionTestSshPreamble: getDefaultConnectionTestSshPreamble(),
     });
   };
 
@@ -260,65 +266,147 @@ export default function ServerConfigPage() {
       setEditingConfig({ ...editingConfig, testSteps: updatedTestSteps });
     }
   };
-
-  const handleSshPreambleStepChange = (index: number, field: keyof SshExecutionStep, value: any) => {
+  
+  // Generic SshExecutionStep handler
+  const handleSshStepChange = (
+    listName: 'scenarioExecutionSshCommands' | 'connectionTestSshPreamble',
+    index: number,
+    field: keyof SshExecutionStep,
+    value: any
+  ) => {
     if (editingConfig) {
-      const updatedSteps = [...editingConfig.scenarioExecutionSshCommands];
+      const currentList = editingConfig[listName] || [];
+      const updatedSteps = [...currentList];
       if (field === 'isEnabled') {
         (updatedSteps[index] as any)[field] = Boolean(value);
       } else {
         (updatedSteps[index] as any)[field] = value;
       }
-      setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: updatedSteps });
+      setEditingConfig({ ...editingConfig, [listName]: updatedSteps });
     }
   };
 
-  const addSshPreambleStep = () => {
+  const addSshStep = (listName: 'scenarioExecutionSshCommands' | 'connectionTestSshPreamble') => {
     if (editingConfig) {
       const newStep: SshExecutionStep = {
-        id: `ssh_preamble_custom_${Date.now()}`,
-        name: 'New SSH Preamble Step',
+        id: `ssh_custom_${listName}_${Date.now()}`,
+        name: 'New SSH Step',
         command: '',
         isEnabled: true,
         expectedOutputContains: '',
       };
-      setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: [...editingConfig.scenarioExecutionSshCommands, newStep] });
+      const currentList = editingConfig[listName] || [];
+      setEditingConfig({ ...editingConfig, [listName]: [...currentList, newStep] });
     }
   };
 
-  const removeSshPreambleStep = (index: number) => {
+  const removeSshStep = (listName: 'scenarioExecutionSshCommands' | 'connectionTestSshPreamble', index: number) => {
     if (editingConfig) {
-      const updatedSteps = editingConfig.scenarioExecutionSshCommands.filter((_, i) => i !== index);
-      setEditingConfig({ ...editingConfig, scenarioExecutionSshCommands: updatedSteps });
+      const currentList = editingConfig[listName] || [];
+      const updatedSteps = currentList.filter((_, i) => i !== index);
+      setEditingConfig({ ...editingConfig, [listName]: updatedSteps });
     }
   };
-  
+
+  const renderSshStepList = (
+    listName: 'scenarioExecutionSshCommands' | 'connectionTestSshPreamble',
+    title: string,
+    description: string
+  ) => (
+    <fieldset className="border p-4 rounded-md">
+      <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
+        <span>{title}</span>
+        <Button variant="outline" size="sm" onClick={() => addSshStep(listName)} className="ml-auto" disabled={isSaving}>
+            <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Step
+        </Button>
+      </legend>
+      <p className="text-xs text-muted-foreground mt-1 mb-3">{description}</p>
+      <div className="space-y-3">
+        {(editingConfig?.[listName] || []).map((step, index) => (
+          <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 flex-grow">
+                <Terminal className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                <Input
+                  value={step.name}
+                  onChange={(e) => handleSshStepChange(listName, index, 'name', e.target.value)}
+                  className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
+                  placeholder="SSH Step Name"
+                  disabled={isSaving}
+                />
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Switch
+                  id={`${listName}-enabled-${index}`}
+                  checked={step.isEnabled}
+                  onCheckedChange={(checked) => handleSshStepChange(listName, index, 'isEnabled', checked)}
+                  aria-label="Enable SSH step"
+                  disabled={isSaving}
+                />
+                <Button variant="ghost" size="icon" onClick={() => removeSshStep(listName, index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div>
+              <Label htmlFor={`${listName}-cmd-${index}`} className="text-xs text-muted-foreground">SSH Command</Label>
+              <Textarea
+                id={`${listName}-cmd-${index}`}
+                value={step.command}
+                onChange={(e) => handleSshStepChange(listName, index, 'command', e.target.value)}
+                rows={1}
+                className="font-mono text-xs mt-1"
+                placeholder="e.g., ssh user@jump.server.com"
+                disabled={isSaving}
+              />
+            </div>
+            <div className="mt-2">
+                <Label htmlFor={`${listName}-expect-${index}`} className="text-xs text-muted-foreground">Expected Output Contains (Optional)</Label>
+                <Input
+                    id={`${listName}-expect-${index}`}
+                    value={step.expectedOutputContains || ''}
+                    onChange={(e) => handleSshStepChange(listName, index, 'expectedOutputContains', e.target.value)}
+                    className="font-mono text-xs mt-1"
+                    placeholder="e.g., 'Connection established' or 'Login successful'"
+                    disabled={isSaving}
+                />
+            </div>
+          </Card>
+        ))}
+         {(editingConfig?.[listName]?.length === 0) && (
+          <p className="text-sm text-muted-foreground text-center py-2">No SSH preamble steps defined for this section.</p>
+        )}
+      </div>
+    </fieldset>
+  );
+
   const handleTestConnection = async (configToTest: ServerConfig) => {
     setTestingServerId(configToTest.id);
     setTestConnectionResult(null);
     setTestConnectionError(null);
-    // Optimistically set status to 'testing' in local state
     setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: 'testing' as ServerStatus } : c));
 
     try {
       const stepsToExecuteClient: ClientTestStep[] = configToTest.testSteps.map(s => ({ 
-          name: s.name,
-          command: s.command,
-          isEnabled: s.isEnabled,
-          isMandatory: s.isMandatory, 
-          type: s.type,
+          name: s.name, command: s.command, isEnabled: s.isEnabled,
+          isMandatory: s.isMandatory, type: s.type,
+          expectedOutputContains: s.expectedOutputContains || undefined,
+      }));
+      
+      const connectionPreambleClientSteps: ClientTestStep[] | undefined = configToTest.connectionTestSshPreamble?.map(s => ({
+          name: s.name, command: s.command, isEnabled: s.isEnabled,
+          isMandatory: false, // Preamble steps are not typically mandatory in the same way as test steps
+          type: 'custom', // Treat preamble steps as custom for the flow
           expectedOutputContains: s.expectedOutputContains || undefined,
       }));
 
       const input: TestServerConnectionInput = {
-        id: configToTest.id,
-        host: configToTest.host,
-        sshPort: configToTest.sshPort,
-        sshUser: configToTest.sshUser,
-        authMethod: configToTest.authMethod,
-        privateKey: configToTest.privateKey,
-        password: configToTest.password,
-        serverType: configToTest.type,
+        id: configToTest.id, host: configToTest.host, sshPort: configToTest.sshPort,
+        sshUser: configToTest.sshUser, authMethod: configToTest.authMethod,
+        privateKey: configToTest.privateKey, password: configToTest.password,
+        serverType: configToTest.type, 
+        customServerType: configToTest.customServerType,
+        connectionTestSshPreamble: connectionPreambleClientSteps,
         stepsToExecute: stepsToExecuteClient,
       };
       const result = await testServerConnection(input);
@@ -327,21 +415,18 @@ export default function ServerConfigPage() {
       let newStatus: ServerStatus = 'unknown';
       if (result.overallStatus === 'success') newStatus = 'connected';
       else if (result.overallStatus === 'failure') {
-        const sshFailed = result.steps.find(s => s.stepName.toLowerCase().includes('ssh') && s.status === 'failure');
+        const sshFailed = result.steps.find(s => s.stepName.toLowerCase().includes('ssh connection attempt') && s.status === 'failure');
         if (sshFailed) newStatus = 'error_ssh';
         else {
             const configFailed = result.steps.find(s => s.stepName.toLowerCase().includes('validate radius config') && s.status === 'failure');
             if (configFailed) newStatus = 'error_config';
-            else newStatus = 'error_service';
+            else newStatus = 'error_service'; // Generic if not SSH or config validation
         }
       } else if (result.overallStatus === 'partial') newStatus = 'issues_found';
       
-      // Update the config with the new status and save it to backend
       const updatedConfigForSave = { ...configToTest, status: newStatus };
       const response = await fetch(`/api/settings/servers/${configToTest.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedConfigForSave),
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatedConfigForSave),
       });
 
       if (!response.ok) {
@@ -355,11 +440,8 @@ export default function ServerConfigPage() {
     } catch (error) {
       console.error("Error testing connection or saving status:", error);
       setTestConnectionError(error instanceof Error ? error.message : "An unknown error occurred during the test.");
-      // Revert status to unknown or previous status on error
       setConfigs(prev => prev.map(c => c.id === configToTest.id ? { ...c, status: configToTest.status || 'unknown' } : c));
       toast({ title: "Connection Test Failed", description: (error as Error).message || "Could not run the connection test or save status.", variant: "destructive" });
-    } finally {
-        // No longer setting testingDbId to null here, result dialog handles its own visibility
     }
   };
 
@@ -416,7 +498,7 @@ export default function ServerConfigPage() {
                 <TableRow key={config.id}>
                   <TableCell className="font-medium">{config.name}</TableCell>
                   <TableCell>{config.host}:{config.radiusAuthPort}</TableCell>
-                  <TableCell><Badge variant="outline">{config.type}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{config.type === 'custom' ? config.customServerType || 'Custom' : config.type}</Badge></TableCell>
                   <TableCell>{getStatusBadge(config.status)}</TableCell>
                   <TableCell className="text-right">
                      <DropdownMenu>
@@ -455,7 +537,6 @@ export default function ServerConfigPage() {
         </CardContent>
       </Card>
 
-      {/* Server Config Editor Dialog */}
       <Dialog open={!!editingConfig} onOpenChange={(isOpen) => !isOpen && handleEditConfig(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -481,11 +562,17 @@ export default function ServerConfigPage() {
                     <SelectTrigger id="server-type"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="freeradius">FreeRADIUS</SelectItem>
+                      <SelectItem value="radiusd">radiusd (Generic)</SelectItem>
                       <SelectItem value="custom">Custom</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {editingConfig.type === 'custom' && (
+                    <div className="md:col-span-2">
+                        <Label htmlFor="custom-server-type">Custom Server Type Name</Label>
+                        <Input id="custom-server-type" value={editingConfig.customServerType || ''} onChange={(e) => setEditingConfig({ ...editingConfig, customServerType: e.target.value })} placeholder="e.g., MyRadiusImpl" disabled={isSaving}/>
+                    </div>
+                )}
               </div>
               
               <div>
@@ -526,73 +613,20 @@ export default function ServerConfigPage() {
                         </div>
                     )}
                 </div>
-                <div className="mt-6">
-                  <Label className="text-md font-semibold flex items-center gap-2">
-                    Scenario Execution SSH Preamble
-                  </Label>
-                  <p className="text-xs text-muted-foreground mt-1 mb-3">
-                    Define SSH commands (e.g., for jump hosts) that would run before RADIUS scenarios. 
-                    If 'Expected Output Contains' is set, the step must produce that output for the preamble to continue.
-                    These are for defining sequences; RadiusEdge does NOT perform live SSH.
-                  </p>
-                  <div className="space-y-3">
-                    {(editingConfig.scenarioExecutionSshCommands || []).map((step, index) => (
-                      <Card key={step.id} className="p-3 bg-muted/50 dark:bg-muted/20">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2 flex-grow">
-                            <Terminal className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
-                            <Input
-                              value={step.name}
-                              onChange={(e) => handleSshPreambleStepChange(index, 'name', e.target.value)}
-                              className="text-sm font-semibold border-0 shadow-none focus-visible:ring-0 p-0 h-auto bg-transparent flex-grow min-w-0"
-                              placeholder="SSH Step Name"
-                              disabled={isSaving}
-                            />
-                          </div>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <Switch
-                              id={`ssh-preamble-enabled-${index}`}
-                              checked={step.isEnabled}
-                              onCheckedChange={(checked) => handleSshPreambleStepChange(index, 'isEnabled', checked)}
-                              aria-label="Enable SSH preamble step"
-                              disabled={isSaving}
-                            />
-                            <Button variant="ghost" size="icon" onClick={() => removeSshPreambleStep(index)} className="text-destructive hover:text-destructive h-7 w-7" disabled={isSaving}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                        <div>
-                          <Label htmlFor={`ssh-preamble-cmd-${index}`} className="text-xs text-muted-foreground">SSH Command</Label>
-                          <Textarea
-                            id={`ssh-preamble-cmd-${index}`}
-                            value={step.command}
-                            onChange={(e) => handleSshPreambleStepChange(index, 'command', e.target.value)}
-                            rows={1}
-                            className="font-mono text-xs mt-1"
-                            placeholder="e.g., ssh user@jump.server.com"
-                            disabled={isSaving}
-                          />
-                        </div>
-                        <div className="mt-2">
-                            <Label htmlFor={`ssh-preamble-expect-${index}`} className="text-xs text-muted-foreground">Expected Output Contains (Optional)</Label>
-                            <Input
-                                id={`ssh-preamble-expect-${index}`}
-                                value={step.expectedOutputContains || ''}
-                                onChange={(e) => handleSshPreambleStepChange(index, 'expectedOutputContains', e.target.value)}
-                                className="font-mono text-xs mt-1"
-                                placeholder="e.g., 'Connection established' or 'Login successful'"
-                                disabled={isSaving}
-                            />
-                        </div>
-                      </Card>
-                    ))}
-                     <Button variant="outline" size="sm" onClick={addSshPreambleStep} className="mt-2 w-full" disabled={isSaving}>
-                      <PlusCircle className="mr-2 h-4 w-4" /> Add SSH Preamble Step
-                    </Button>
-                  </div>
-                </div>
               </fieldset>
+              
+              {renderSshStepList(
+                'connectionTestSshPreamble',
+                'Connection Test SSH Preamble (Simulated)',
+                "SSH commands to run *before* the Connection Test Sequence (e.g., for bastion hosts, setup). Uses Server SSH Details."
+              )}
+
+              {renderSshStepList(
+                'scenarioExecutionSshCommands',
+                'Scenario Execution SSH Preamble (Simulated)',
+                "SSH commands to run *before* scenarios target this server (e.g., for jump hosts, tunnels). Uses Server SSH Details."
+              )}
+              
 
               <fieldset className="border p-4 rounded-md">
                 <legend className="text-sm font-medium px-1">RADIUS Ports & Secrets</legend>
@@ -634,11 +668,14 @@ export default function ServerConfigPage() {
 
               <fieldset className="border p-4 rounded-md">
                   <legend className="text-sm font-medium px-1 flex justify-between items-center w-full">
-                    <span>Connection Test Sequence</span>
+                    <span>Connection Test Sequence (Simulated)</span>
                     <Button variant="outline" size="sm" onClick={addCustomTestStep} className="ml-auto" disabled={isSaving}>
                         <PlusCircle className="mr-2 h-4 w-4" /> Add Custom Step
                     </Button>
                   </legend>
+                  <p className="text-xs text-muted-foreground mt-1 mb-3">
+                      Define SSH commands to verify server readiness (e.g., check config, service status, tools). Runs *after* Connection Test SSH Preamble.
+                  </p>
                   <div className="space-y-3 mt-3">
                     {editingConfig.testSteps.map((step, index) => (
                         <Card key={step.id} className="p-3 bg-muted/50 relative group dark:bg-muted/20">
@@ -716,10 +753,9 @@ export default function ServerConfigPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Test Connection Result Dialog */}
       <Dialog open={!!(testingServerId && (testConnectionResult || testConnectionError))} onOpenChange={(isOpen) => {
         if (!isOpen) {
-          setTestingServerId(null); // Clear the testing ID when dialog is closed
+          setTestingServerId(null); 
           setTestConnectionResult(null);
           setTestConnectionError(null);
         }
@@ -752,16 +788,12 @@ export default function ServerConfigPage() {
                     <CardHeader className={cn("p-3 flex flex-row items-center justify-between",
                       step.status === 'success' && 'bg-green-500/10 dark:bg-green-600/20',
                       step.status === 'failure' && 'bg-red-500/10 dark:bg-red-600/20',
-                      step.status === 'skipped' && 'bg-gray-500/10 dark:bg-gray-600/20',
-                      step.status === 'running' && 'bg-blue-500/10 dark:bg-blue-600/20 animate-pulse',
-                      step.status === 'pending' && 'bg-muted/50 dark:bg-muted/20'
+                      step.status === 'skipped' && 'bg-gray-500/10 dark:bg-gray-600/20'
                     )}>
                       <div className="flex items-center gap-2">
                         {step.status === 'success' && <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />}
                         {step.status === 'failure' && <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />}
                         {step.status === 'skipped' && <AlertTriangle className="h-5 w-5 text-gray-600 dark:text-gray-400" />}
-                        {step.status === 'running' && <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />}
-                        {step.status === 'pending' && <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />}
                         <CardTitle className="text-md">{step.stepName}</CardTitle>
                       </div>
                       <Badge variant={
