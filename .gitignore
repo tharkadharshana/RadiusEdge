@@ -47,8 +47,8 @@ firebase-debug.log
 database-debug.log
 
 # SQLite Database
-*.db
-*.db-journal
-/.data/
-radiusedge.db
-radiusedge.db-journal
+# *.db
+# *.db-journal
+# /.data/
+# radiusedge.db
+# radiusedge.db-journal

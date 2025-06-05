@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -16,7 +15,6 @@ import {
   Waypoints,
   DatabaseZap,
   Users,
-  FileImport, // Assuming FileImport was for the removed Packet Importer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -31,7 +29,7 @@ import {
   SidebarMenuSubButton,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { SheetTitle } from "@/components/ui/sheet"; // Import SheetTitle
+import { SheetTitle } from "@/components/ui/sheet";
 import { Logo } from "./logo";
 import { ThemeToggle } from "./theme-toggle"; 
 
@@ -40,7 +38,7 @@ interface NavItem {
   label: string;
   icon: React.ElementType;
   subItems?: NavItem[];
-  segment?: string; // For matching active route with children
+  segment?: string;
 }
 
 const navItems: NavItem[] = [
@@ -60,14 +58,13 @@ const navItems: NavItem[] = [
       { href: "/settings/servers", label: "Server Config", icon: Server },
       { href: "/settings/database", label: "DB Validation", icon: DatabaseZap },
       { href: "/settings/users", label: "User Management", icon: Users },
-
     ],
   },
 ];
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const { open, state, isMobile } = useSidebar(); // Added isMobile
+  const { open, state, isMobile } = useSidebar();
 
   const isActive = (href: string, segment?: string) => {
     if (segment) {
@@ -81,13 +78,13 @@ export function AppSidebar() {
       <SidebarHeader className="p-4">
         <Link href="/" className="flex items-center gap-2">
           <Logo className="h-8 w-8 text-primary" />
-          {isMobile ? ( // If mobile, it's inside a Sheet, so SheetTitle is needed for accessibility
+          {isMobile ? (
             <SheetTitle asChild> 
               <h1 className="text-xl font-semibold text-foreground">RadiusEdge</h1>
             </SheetTitle>
-          ) : state === "expanded" ? ( // If desktop and expanded, just a normal h1
+          ) : state === "expanded" ? (
             <h1 className="text-xl font-semibold text-foreground">RadiusEdge</h1>
-          ) : null /* Otherwise (desktop collapsed), render no title text */}
+          ) : null}
         </Link>
       </SidebarHeader>
       <SidebarContent className="flex-1 p-2">
@@ -103,26 +100,20 @@ export function AppSidebar() {
                   <item.icon className="h-5 w-5" />
                   {state === "expanded" && <span>{item.label}</span>}
                 </SidebarMenuButton>
-                {/* 
-                  Only render sub-menu if desktop sidebar is expanded.
-                  Mobile sheet will show all items directly or handle sub-navigation differently if needed.
-                */}
                 {(state === 'expanded' && !isMobile) && ( 
                   <SidebarMenuSub>
                     {item.subItems.map((subItem) => (
                       <SidebarMenuItem key={subItem.label}>
-                        <Link href={subItem.href} legacyBehavior passHref>
                           <SidebarMenuSubButton
+                          asChild
                             isActive={isActive(subItem.href)}
                             className="justify-start gap-2"
-                            asChild
                           >
-                            <a> {/* Content of the link */}
+                          <Link href={subItem.href}>
                               <subItem.icon className="h-4 w-4" />
                               <span>{subItem.label}</span>
-                            </a>
+                          </Link>
                           </SidebarMenuSubButton>
-                        </Link>
                       </SidebarMenuItem>
                     ))}
                   </SidebarMenuSub>
@@ -130,19 +121,17 @@ export function AppSidebar() {
               </SidebarMenuItem>
             ) : (
               <SidebarMenuItem key={item.label}>
-                <Link href={item.href} legacyBehavior passHref>
                   <SidebarMenuButton
+                  asChild
                     isActive={isActive(item.href)}
                     tooltip={item.label}
                     className="justify-start"
-                    asChild
                   >
-                    <a> {/* Content of the link */}
+                  <Link href={item.href}>
                       <item.icon className="h-5 w-5" />
                       {state === "expanded" && <span>{item.label}</span>}
-                    </a>
+                  </Link>
                   </SidebarMenuButton>
-                </Link>
               </SidebarMenuItem>
             )
           )}
