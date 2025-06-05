@@ -33,7 +33,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
-
+import type { RadiusPacket } from '@/app/packets/page'; // Import RadiusPacket type
 
 export type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end' | 'api_call' | 'log_message';
 
@@ -138,6 +138,8 @@ export default function ScenariosPage() {
   const [isParsingAttributes, setIsParsingAttributes] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [availablePackets, setAvailablePackets] = useState<RadiusPacket[]>([]);
+  const [isLoadingPackets, setIsLoadingPackets] = useState(false);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -192,6 +194,23 @@ export default function ScenariosPage() {
     debouncedFetchScenarios(searchTerm);
   }, [searchTerm, debouncedFetchScenarios]);
 
+  const fetchAvailablePackets = async () => {
+    setIsLoadingPackets(true);
+    try {
+      const response = await fetch('/api/packets');
+      if (!response.ok) {
+        throw new Error('Failed to fetch packet templates');
+      }
+      const data = await response.json();
+      setAvailablePackets(data);
+    } catch (error) {
+      console.error("Error fetching packet templates:", error);
+      toast({ title: "Error", description: "Could not load packet templates.", variant: "destructive" });
+      setAvailablePackets([]);
+    } finally {
+      setIsLoadingPackets(false);
+    }
+  };
 
   useEffect(() => {
     const templateId = searchParams.get('template');
@@ -215,6 +234,9 @@ export default function ScenariosPage() {
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
     setPastedAttributesText('');
+    if (scenario) { // If opening an existing scenario for edit, fetch packets for dropdown
+      fetchAvailablePackets();
+    }
   };
 
   const handleSaveScenario = async () => {
@@ -280,6 +302,7 @@ export default function ScenariosPage() {
       lastModified: new Date().toISOString(),
       tags: [],
     });
+    fetchAvailablePackets(); // Fetch packets when creating a new scenario
   };
 
   const addVariable = () => {
@@ -314,7 +337,7 @@ export default function ScenariosPage() {
       let stepDetails: ScenarioStep['details'] = {};
       if (type === 'radius') {
         stepName = 'New RADIUS Request';
-        stepDetails = { packet_id: '', expectedAttributes: [], timeout: 3000, retries: 2 };
+        stepDetails = { packet_id: availablePackets.length > 0 ? availablePackets[0].id : '', expectedAttributes: [], timeout: 3000, retries: 2 };
       } else if (type === 'sql') {
         // REAL_IMPLEMENTATION_NOTE: SQL steps require a backend execution engine.
         // The UI here is for defining the step.
@@ -771,12 +794,24 @@ export default function ScenariosPage() {
                             <div className="space-y-3 pl-7 text-sm">
                               <div>
                                 <Label>Packet Template:</Label>
-                                <Select value={step.details.packet_id} onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})} disabled={isSaving}>
-                                  <SelectTrigger><SelectValue placeholder="Select Packet..."/></SelectTrigger>
+                                <Select 
+                                  value={step.details.packet_id} 
+                                  onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})} 
+                                  disabled={isSaving || isLoadingPackets}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder={isLoadingPackets ? "Loading packets..." : "Select Packet..."}/>
+                                  </SelectTrigger>
                                   <SelectContent>
-                                    {/* REAL_IMPLEMENTATION_NOTE: Packet selection should be populated from /api/packets */}
-                                    <SelectItem value="pkt1">3GPP Access-Request (Sample)</SelectItem>
-                                    <SelectItem value="pkt2">Cisco VoIP Acc Start (Sample)</SelectItem>
+                                    {isLoadingPackets ? (
+                                      <div className="p-2 text-center text-sm text-muted-foreground">Loading...</div>
+                                    ) : availablePackets.length > 0 ? (
+                                      availablePackets.map(packet => (
+                                        <SelectItem key={packet.id} value={packet.id}>{packet.name}</SelectItem>
+                                      ))
+                                    ) : (
+                                      <div className="p-2 text-center text-sm text-muted-foreground">No packets found. <Link href="/packets" className="text-primary hover:underline">Create one?</Link></div>
+                                    )}
                                   </SelectContent>
                                 </Select>
                               </div>
