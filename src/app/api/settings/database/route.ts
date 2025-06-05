@@ -2,7 +2,7 @@
 // src/app/api/settings/database/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
-import type { DbConnectionConfig, DbSshPreambleStepConfig, DbValidationStepConfig } from '@/app/settings/database/page'; // Assuming types are exported
+import type { DbConnectionConfig } from '@/app/settings/database/page'; 
 import { v4 as uuidv4 } from 'uuid';
 
 // Helper to parse JSON fields safely
@@ -25,6 +25,7 @@ export async function GET() {
     const configs: DbConnectionConfig[] = configsFromDb.map(c => ({
       ...c,
       sshPreambleSteps: parseJsonField(c.sshPreambleSteps, []),
+      directTestSshPreamble: parseJsonField(c.directTestSshPreamble, []),
       validationSteps: parseJsonField(c.validationSteps, []),
       port: Number(c.port),
     })) as DbConnectionConfig[];
@@ -57,14 +58,15 @@ export async function POST(request: NextRequest) {
       databaseName: body.databaseName,
       status: body.status || 'unknown',
       sshPreambleSteps: body.sshPreambleSteps || [],
+      directTestSshPreamble: body.directTestSshPreamble || [],
       validationSteps: body.validationSteps || [],
     };
 
     await db.run(
       `INSERT INTO db_configs (
         id, name, type, host, port, username, password, databaseName,
-        status, sshPreambleSteps, validationSteps
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, sshPreambleSteps, directTestSshPreamble, validationSteps
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       newConfig.id,
       newConfig.name,
       newConfig.type,
@@ -75,6 +77,7 @@ export async function POST(request: NextRequest) {
       newConfig.databaseName,
       newConfig.status,
       JSON.stringify(newConfig.sshPreambleSteps),
+      JSON.stringify(newConfig.directTestSshPreamble),
       JSON.stringify(newConfig.validationSteps)
     );
 
@@ -84,3 +87,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Failed to create database configuration', error: (error as Error).message }, { status: 500 });
   }
 }
+
+    

@@ -2,7 +2,7 @@
 // src/app/api/settings/servers/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
-import type { ServerConfig, TestStepConfig, SshExecutionStep } from '@/app/settings/servers/page'; // Assuming types are exported
+import type { ServerConfig } from '@/app/settings/servers/page'; 
 import { v4 as uuidv4 } from 'uuid';
 
 // Helper to parse JSON fields safely
@@ -28,7 +28,7 @@ export async function GET() {
       nasSpecificSecrets: parseJsonField(c.nasSpecificSecrets, {}),
       testSteps: parseJsonField(c.testSteps, []),
       scenarioExecutionSshCommands: parseJsonField(c.scenarioExecutionSshCommands, []),
-      // Ensure numeric fields are numbers
+      connectionTestSshPreamble: parseJsonField(c.connectionTestSshPreamble, []),
       sshPort: Number(c.sshPort),
       radiusAuthPort: Number(c.radiusAuthPort),
       radiusAcctPort: Number(c.radiusAcctPort),
@@ -44,7 +44,7 @@ export async function GET() {
 // POST a new server configuration
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as Omit<ServerConfig, 'id'>; // Assuming status will be set by client or flow later
+    const body = await request.json() as Omit<ServerConfig, 'id'>; 
 
     if (!body.name || !body.host) {
       return NextResponse.json({ message: 'Server name and host are required' }, { status: 400 });
@@ -55,6 +55,7 @@ export async function POST(request: NextRequest) {
       id: uuidv4(),
       name: body.name,
       type: body.type || 'freeradius',
+      customServerType: body.customServerType || '',
       host: body.host,
       sshPort: Number(body.sshPort) || 22,
       sshUser: body.sshUser || 'root',
@@ -65,20 +66,22 @@ export async function POST(request: NextRequest) {
       radiusAcctPort: Number(body.radiusAcctPort) || 1813,
       defaultSecret: body.defaultSecret || '',
       nasSpecificSecrets: body.nasSpecificSecrets || {},
-      status: body.status || 'unknown', // Default status
+      status: body.status || 'unknown', 
       testSteps: body.testSteps || [],
       scenarioExecutionSshCommands: body.scenarioExecutionSshCommands || [],
+      connectionTestSshPreamble: body.connectionTestSshPreamble || [],
     };
 
     await db.run(
       `INSERT INTO server_configs (
-        id, name, type, host, sshPort, sshUser, authMethod, privateKey, password,
+        id, name, type, customServerType, host, sshPort, sshUser, authMethod, privateKey, password,
         radiusAuthPort, radiusAcctPort, defaultSecret, nasSpecificSecrets, status,
-        testSteps, scenarioExecutionSshCommands
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        testSteps, scenarioExecutionSshCommands, connectionTestSshPreamble
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       newConfig.id,
       newConfig.name,
       newConfig.type,
+      newConfig.customServerType,
       newConfig.host,
       newConfig.sshPort,
       newConfig.sshUser,
@@ -91,7 +94,8 @@ export async function POST(request: NextRequest) {
       JSON.stringify(newConfig.nasSpecificSecrets),
       newConfig.status,
       JSON.stringify(newConfig.testSteps),
-      JSON.stringify(newConfig.scenarioExecutionSshCommands)
+      JSON.stringify(newConfig.scenarioExecutionSshCommands),
+      JSON.stringify(newConfig.connectionTestSshPreamble)
     );
 
     return NextResponse.json(newConfig, { status: 201 });
@@ -100,3 +104,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Failed to create server configuration', error: (error as Error).message }, { status: 500 });
   }
 }
+
+    

@@ -2,7 +2,7 @@
 // src/app/api/settings/servers/[id]/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
-import type { ServerConfig, TestStepConfig, SshExecutionStep } from '@/app/settings/servers/page'; // Assuming types are exported
+import type { ServerConfig } from '@/app/settings/servers/page'; 
 
 interface Params {
   id: string;
@@ -34,6 +34,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
       nasSpecificSecrets: parseJsonField(configFromDb.nasSpecificSecrets, {}),
       testSteps: parseJsonField(configFromDb.testSteps, []),
       scenarioExecutionSshCommands: parseJsonField(configFromDb.scenarioExecutionSshCommands, []),
+      connectionTestSshPreamble: parseJsonField(configFromDb.connectionTestSshPreamble, []),
       sshPort: Number(configFromDb.sshPort),
       radiusAuthPort: Number(configFromDb.radiusAuthPort),
       radiusAcctPort: Number(configFromDb.radiusAcctPort),
@@ -60,6 +61,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     const updatedConfigData = {
       name: body.name || existingConfig.name,
       type: body.type || existingConfig.type,
+      customServerType: body.customServerType !== undefined ? body.customServerType : existingConfig.customServerType,
       host: body.host || existingConfig.host,
       sshPort: body.sshPort !== undefined ? Number(body.sshPort) : Number(existingConfig.sshPort),
       sshUser: body.sshUser || existingConfig.sshUser,
@@ -73,16 +75,18 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       status: body.status !== undefined ? body.status : existingConfig.status,
       testSteps: body.testSteps !== undefined ? JSON.stringify(body.testSteps) : existingConfig.testSteps,
       scenarioExecutionSshCommands: body.scenarioExecutionSshCommands !== undefined ? JSON.stringify(body.scenarioExecutionSshCommands) : existingConfig.scenarioExecutionSshCommands,
+      connectionTestSshPreamble: body.connectionTestSshPreamble !== undefined ? JSON.stringify(body.connectionTestSshPreamble) : existingConfig.connectionTestSshPreamble,
     };
 
     const result = await db.run(
       `UPDATE server_configs SET 
-        name = ?, type = ?, host = ?, sshPort = ?, sshUser = ?, authMethod = ?, privateKey = ?, password = ?,
+        name = ?, type = ?, customServerType = ?, host = ?, sshPort = ?, sshUser = ?, authMethod = ?, privateKey = ?, password = ?,
         radiusAuthPort = ?, radiusAcctPort = ?, defaultSecret = ?, nasSpecificSecrets = ?, status = ?,
-        testSteps = ?, scenarioExecutionSshCommands = ?
+        testSteps = ?, scenarioExecutionSshCommands = ?, connectionTestSshPreamble = ?
       WHERE id = ?`,
       updatedConfigData.name,
       updatedConfigData.type,
+      updatedConfigData.customServerType,
       updatedConfigData.host,
       updatedConfigData.sshPort,
       updatedConfigData.sshUser,
@@ -96,6 +100,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       updatedConfigData.status,
       updatedConfigData.testSteps,
       updatedConfigData.scenarioExecutionSshCommands,
+      updatedConfigData.connectionTestSshPreamble,
       params.id
     );
 
@@ -113,6 +118,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       nasSpecificSecrets: parseJsonField(updatedConfigFromDb.nasSpecificSecrets, {}),
       testSteps: parseJsonField(updatedConfigFromDb.testSteps, []),
       scenarioExecutionSshCommands: parseJsonField(updatedConfigFromDb.scenarioExecutionSshCommands, []),
+      connectionTestSshPreamble: parseJsonField(updatedConfigFromDb.connectionTestSshPreamble, []),
       sshPort: Number(updatedConfigFromDb.sshPort),
       radiusAuthPort: Number(updatedConfigFromDb.radiusAuthPort),
       radiusAcctPort: Number(updatedConfigFromDb.radiusAcctPort),
@@ -141,3 +147,5 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
     return NextResponse.json({ message: `Failed to delete server configuration ${params.id}`, error: (error as Error).message }, { status: 500 });
   }
 }
+
+    
