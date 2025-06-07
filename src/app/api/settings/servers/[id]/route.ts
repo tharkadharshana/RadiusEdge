@@ -78,7 +78,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       connectionTestSshPreamble: body.connectionTestSshPreamble !== undefined ? JSON.stringify(body.connectionTestSshPreamble) : existingConfig.connectionTestSshPreamble,
     };
 
-    const result = await db.run(
+    await db.run(
       `UPDATE server_configs SET 
         name = ?, type = ?, customServerType = ?, host = ?, sshPort = ?, sshUser = ?, authMethod = ?, privateKey = ?, password = ?,
         radiusAuthPort = ?, radiusAcctPort = ?, defaultSecret = ?, nasSpecificSecrets = ?, status = ?,
@@ -103,12 +103,9 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       updatedConfigData.connectionTestSshPreamble,
       params.id
     );
-
-    // Removed 'changes === 0' check causing 404 when data is identical
     
     const updatedConfigFromDb = await db.get('SELECT * FROM server_configs WHERE id = ?', params.id);
      if (!updatedConfigFromDb) {
-      // This should ideally not happen if the ID was valid
       return NextResponse.json({ message: 'Failed to retrieve updated server configuration after update' }, { status: 500 });
     }
 
@@ -126,10 +123,24 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     return NextResponse.json(configToReturn);
   } catch (error: any) {
     console.error(`API_ERROR: Failed to update server configuration ${params.id}:`, error.message, error.stack);
-    return NextResponse.json({ 
-      message: `Failed to update server configuration for ID ${params.id}. Please check server logs.`,
-      errorDetail: error.message || 'An unknown error occurred on the server.' 
-    }, { status: 500 });
+    let status = 500;
+    let message = `Failed to update server configuration for ID ${params.id}. Please check server logs.`;
+    let errorDetail = error.message || 'An unknown error occurred on the server.';
+
+    if (error.message && error.message.toUpperCase().includes('SQLITE_READONLY')) {
+      // It's better to use a more specific error code if available, e.g., from error.errno or error.code
+      // For SQLite, SQLITE_READONLY is error code 8.
+      // status = 503; // Service Unavailable (database is not writable)
+      // Alternatively, 403 Forbidden if it's a persistent permission issue not a temporary state.
+      // For simplicity, sticking to 500 but providing very specific message.
+      message = 'Database is in read-only mode. Cannot save changes.';
+      errorDetail = 'The database file or its directory does not have write permissions, or the filesystem is mounted read-only. Please check server/filesystem permissions for the application process.';
+    }
+
+    return NextResponse.json({
+      message: message,
+      errorDetail: errorDetail
+    }, { status: status });
   }
 }
 
@@ -137,16 +148,18 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
 export async function DELETE(request: NextRequest, { params }: { params: Params }) {
   try {
     const db = await getDb();
-    const result = await db.run('DELETE FROM server_configs WHERE id = ?', params.id);
-
-    if (result.changes === 0) {
-      return NextResponse.json({ message: 'Server configuration not found' }, { status: 404 });
-    }
-
-    return NextResponse.json({ message: 'Server configuration deleted successfully' }, { status: 200 });
-  } catch (error) {
+    await db.run('DELETE FROM server_configs WHERE id = ?', params.id); // Removed result variable as it's not checked before returning 404
+    // Assuming if no error, it was successful or ID didn't exist (which is fine for DELETE idempotency)
+    return NextResponse.json({ message: 'Server configuration deleted successfully or did not exist.' }, { status: 200 });
+  } catch (error: any) {
     console.error(`Failed to delete server configuration ${params.id}:`, error);
-    return NextResponse.json({ message: `Failed to delete server configuration ${params.id}`, errorDetail: (error as Error).message }, { status: 500 });
+    let message = `Failed to delete server configuration ${params.id}.`;
+    let errorDetail = error.message || 'An unknown error occurred.';
+    if (error.message && error.message.toUpperCase().includes('SQLITE_READONLY')) {
+      message = 'Database is in read-only mode. Cannot delete configuration.';
+      errorDetail = 'The database file or its directory does not have write permissions, or the filesystem is mounted read-only.';
+    }
+    return NextResponse.json({ message, errorDetail }, { status: 500 });
   }
 }
 
