@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,7 +33,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
-import type { RadiusPacket } from '@/app/packets/page'; // Import RadiusPacket type
+import type { RadiusPacket } from '@/app/packets/page'; 
 
 export type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end' | 'api_call' | 'log_message';
 
@@ -71,14 +71,11 @@ export interface ScenarioStep {
     // Conditional / Loop condition
     condition?: string;
     // API Call
-    // REAL_IMPLEMENTATION_NOTE: For API calls, a live system would make actual HTTP requests.
-    // The `mockResponseBody` is for simulation in this prototype.
-    // A real system would capture the actual response for validation or data extraction.
     url?: string;
     method?: 'GET' | 'POST';
     headers?: ApiHeader[];
     requestBody?: string;
-    mockResponseBody?: string; // For simulation
+    mockResponseBody?: string; 
     // Log Message
     message?: string;
   };
@@ -91,7 +88,7 @@ export interface ScenarioVariable {
   value: string;
 }
 
-export interface Scenario { // Exporting for API usage
+export interface Scenario { 
   id: string;
   name: string;
   description: string;
@@ -131,6 +128,7 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
 
 export default function ScenariosPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -234,7 +232,7 @@ export default function ScenariosPage() {
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
     setPastedAttributesText('');
-    if (scenario) { // If opening an existing scenario for edit, fetch packets for dropdown
+    if (scenario) { 
       fetchAvailablePackets();
     }
   };
@@ -271,7 +269,6 @@ export default function ScenariosPage() {
   };
 
   const handleDeleteScenario = async (scenarioId: string) => {
-    // REAL_IMPLEMENTATION_NOTE: This uses window.confirm. For more robust UI, replace with a custom AlertDialog.
     if (!window.confirm("Are you sure you want to delete this scenario?")) {
       return;
     }
@@ -302,7 +299,7 @@ export default function ScenariosPage() {
       lastModified: new Date().toISOString(),
       tags: [],
     });
-    fetchAvailablePackets(); // Fetch packets when creating a new scenario
+    fetchAvailablePackets(); 
   };
 
   const addVariable = () => {
@@ -339,8 +336,6 @@ export default function ScenariosPage() {
         stepName = 'New RADIUS Request';
         stepDetails = { packet_id: availablePackets.length > 0 ? availablePackets[0].id : '', expectedAttributes: [], timeout: 3000, retries: 2 };
       } else if (type === 'sql') {
-        // REAL_IMPLEMENTATION_NOTE: SQL steps require a backend execution engine.
-        // The UI here is for defining the step.
         stepName = 'New SQL Validation';
         stepDetails = { query: '', expect_column: '', expect_value: '', connection: '' };
       } else if (type === 'delay') {
@@ -357,7 +352,6 @@ export default function ScenariosPage() {
       } else if (type === 'conditional_end') {
         stepName = 'Conditional End';
       } else if (type === 'api_call') {
-        // REAL_IMPLEMENTATION_NOTE: API calls are simulated.
         stepName = 'New API Call';
         stepDetails = { url: '', method: 'GET', headers: [{id: `header_${Date.now()}`, name: 'Content-Type', value: 'application/json'}], requestBody: '', mockResponseBody: '{ "success": true }' };
       } else if (type === 'log_message') {
@@ -543,7 +537,6 @@ export default function ScenariosPage() {
           throw new Error("Invalid scenario file format. Missing 'name' or 'steps'.");
         }
         
-        // Ensure IDs are unique for imported items to prevent key conflicts if importing multiple times
         const ensureUniqueIds = (items: any[], prefix: string) => 
           items.map(item => ({ ...item, id: `${prefix}_imported_${Date.now()}_${Math.random().toString(36).substring(2,9)}` }));
 
@@ -576,6 +569,27 @@ export default function ScenariosPage() {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleRunScenario = (scenarioId: string, scenarioName: string) => {
+    toast({ title: "Run Scenario", description: `Navigating to execute scenario: ${scenarioName}. Please select a server on the next page.` });
+    router.push(`/execute?scenarioId=${scenarioId}&scenarioName=${encodeURIComponent(scenarioName)}`);
+  };
+  
+  const handleDuplicateScenario = (scenarioId: string) => {
+    const scenarioToDuplicate = scenarios.find(s => s.id === scenarioId);
+    if (scenarioToDuplicate) {
+      const newScenario: Scenario = {
+        ...JSON.parse(JSON.stringify(scenarioToDuplicate)), // Deep copy
+        id: 'new', // Mark as new
+        name: `${scenarioToDuplicate.name} (Copy)`,
+        lastModified: new Date().toISOString(),
+      };
+      handleEditScenario(newScenario);
+      toast({ title: "Scenario Duplicated", description: `"${scenarioToDuplicate.name}" duplicated. Save to confirm.` });
+    } else {
+      toast({ title: "Error", description: "Scenario not found for duplication.", variant: "destructive" });
+    }
   };
 
 
@@ -653,10 +667,10 @@ export default function ScenariosPage() {
                         <DropdownMenuItem onClick={() => handleEditScenario(scenario)} disabled={isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled> {/* Conceptual */}
+                        <DropdownMenuItem onClick={() => handleRunScenario(scenario.id, scenario.name)} disabled={isSaving}>
                           <Play className="mr-2 h-4 w-4" /> Run
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled> {/* Conceptual */}
+                        <DropdownMenuItem onClick={() => handleDuplicateScenario(scenario.id)} disabled={isSaving}>
                           <Copy className="mr-2 h-4 w-4" /> Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
@@ -778,7 +792,6 @@ export default function ScenariosPage() {
                       const StepIcon = stepIcons[step.type];
                       return (
                         <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
-                           {/* REAL_IMPLEMENTATION_NOTE: The GripVertical icon is for visual representation of future drag-and-drop reordering. It is not functional yet. */}
                            <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented)" disabled={isSaving}>
                             <GripVertical className="h-4 w-4" />
                           </Button>
@@ -878,9 +891,6 @@ export default function ScenariosPage() {
 
                           {step.type === 'sql' && (
                             <div className="space-y-2 pl-7 text-sm">
-                              {/* REAL_IMPLEMENTATION_NOTE: This step is for definition only. Actual SQL execution
-                                  would happen in a backend scenario execution engine.
-                                  The 'Connection' field would map to a DB config from /settings/database. */}
                               <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} disabled={isSaving}/>
                               <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} disabled={isSaving}/>
                               <Label>DB Connection:</Label><Input placeholder="Default DB (or ID from DB settings)" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} disabled={isSaving}/>
@@ -893,8 +903,6 @@ export default function ScenariosPage() {
                           )}
                           {(step.type === 'loop_start' || step.type === 'conditional_start') && (
                             <div className="space-y-2 pl-7 text-sm">
-                              {/* REAL_IMPLEMENTATION_NOTE: Loop and conditional logic are visual representations.
-                                  A backend execution engine would need to implement this logic. */}
                               {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} disabled={isSaving}/></div>}
                               <Label>Condition (Descriptive):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})} disabled={isSaving}/>
                               <p className="text-xs text-muted-foreground">Note: Conditional & loop execution logic is not implemented in this prototype.</p>
@@ -906,8 +914,6 @@ export default function ScenariosPage() {
 
                           {step.type === 'api_call' && (
                             <div className="space-y-3 pl-7 text-sm">
-                              {/* REAL_IMPLEMENTATION_NOTE: API calls are simulated. A backend engine
-                                  would make live HTTP requests. The mockResponseBody is for simulation. */}
                               <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })} disabled={isSaving}/></div>
                               <div>
                                 <Label>Method:</Label>
@@ -977,3 +983,4 @@ export default function ScenariosPage() {
 }
 
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
+

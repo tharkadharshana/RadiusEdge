@@ -391,6 +391,42 @@ export default function PacketsPage() {
     }
   };
 
+  const handleDuplicatePacket = (packetId: string) => {
+    const packetToDuplicate = packets.find(p => p.id === packetId);
+    if (packetToDuplicate) {
+      const newPacket: RadiusPacket = {
+        ...JSON.parse(JSON.stringify(packetToDuplicate)), // Deep copy
+        id: 'new', // Mark as new
+        name: `${packetToDuplicate.name} (Copy)`,
+        lastModified: new Date().toISOString(),
+      };
+      handleEditPacket(newPacket);
+      toast({ title: "Packet Duplicated", description: `"${packetToDuplicate.name}" duplicated. Save to confirm.` });
+    } else {
+      toast({ title: "Error", description: "Packet not found for duplication.", variant: "destructive" });
+    }
+  };
+  
+  const handleExportPacket = (packetId: string) => {
+    const packetToExport = packets.find(p => p.id === packetId);
+    if (packetToExport) {
+      const packetJson = JSON.stringify(packetToExport, null, 2);
+      const blob = new Blob([packetJson], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = packetToExport.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      a.download = `radiusedge_packet_${safeName || 'untitled'}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Packet Exported", description: `Packet "${packetToExport.name}" has been prepared for download.` });
+    } else {
+      toast({ title: "Error", description: "Packet not found for export.", variant: "destructive" });
+    }
+  };
+
 
   return (
     <div className="space-y-8">
@@ -460,10 +496,10 @@ export default function PacketsPage() {
                         <DropdownMenuItem onClick={() => handleEditPacket(packet)} disabled={isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled> {/* Functionality not implemented */}
+                        <DropdownMenuItem onClick={() => handleDuplicatePacket(packet.id)} disabled={isSaving}>
                           <Copy className="mr-2 h-4 w-4" /> Duplicate
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled> {/* Functionality not implemented */}
+                        <DropdownMenuItem onClick={() => handleExportPacket(packet.id)} disabled={isSaving}>
                           <Share2 className="mr-2 h-4 w-4" /> Export
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
