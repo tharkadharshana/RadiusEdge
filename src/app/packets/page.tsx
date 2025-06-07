@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, ChangeEvent } from 'react';
+import { useRouter } from 'next/navigation'; // Added for navigation
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -9,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Search, X, Loader2, MoreHorizontal, Wand2, Settings2, CheckSquare } from 'lucide-react';
+import { PlusCircle, Edit3, Copy, Trash2, Save, Share2, Search, X, Loader2, MoreHorizontal, Wand2, Settings2, CheckSquare, PlayCircle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -33,65 +34,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
 import { cn } from '@/lib/utils';
+import type { RadiusPacket, RadiusAttribute, ExecutionTool, RadClientOptions, RadTestOptions } from '@/lib/types'; // Import from lib/types
 
-export interface RadiusAttribute {
-  id: string;
-  name: string;
-  value: string;
-}
-
-export interface RadClientOptions {
-  server?: string; // e.g., server_ip:port
-  type?: 'auth' | 'acct' | 'status' | 'coa' | 'disconnect' | 'auto';
-  secret?: string;
-  useIPv4?: boolean;
-  useIPv6?: boolean;
-  blastChecks?: boolean;
-  count?: number;
-  raddbDirectory?: string;
-  dictionaryDirectory?: string;
-  inputFile?: string; // file[:file]
-  printFileName?: boolean; // -F
-  requestId?: number; // -i id
-  requestsPerSecond?: number; // -n
-  parallelRequests?: number; // -p
-  protocol?: 'tcp' | 'udp'; // -P proto
-  quietMode?: boolean; // -q
-  retries?: number; // -r num_retries
-  summaries?: boolean; // -s
-  sharedSecretFile?: string; // -S
-  timeout?: number; // -t
-  debug?: boolean; // -x
-}
-
-export interface RadTestOptions {
-  user?: string;
-  password?: string;
-  radiusServer?: string; // server_ip:port
-  nasPortNumber?: number;
-  secret?: string;
-  ppphint?: boolean; // integer > 0 interpreted as true
-  nasname?: string;
-  raddbDirectory?: string; // -d
-  protocol?: 'tcp' | 'udp'; // -P
-  authType?: 'pap' | 'chap' | 'mschap' | 'eap-md5'; // -t
-  debug?: boolean; // -x
-  useIPv4?: boolean; // -4
-  useIPv6?: boolean; // -6
-}
-
-export type ExecutionTool = 'radclient' | 'radtest';
-
-export interface RadiusPacket {
-  id: string;
-  name: string;
-  description: string;
-  attributes: RadiusAttribute[];
-  lastModified: string;
-  tags: string[];
-  executionTool?: ExecutionTool;
-  toolOptions?: RadClientOptions | RadTestOptions;
-}
 
 // Debounce function
 function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
@@ -116,11 +60,11 @@ export default function PacketsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [pastedAttributesText, setPastedAttributesText] = useState('');
   const [isParsingAttributes, setIsParsingAttributes] = useState(false);
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
+  const [activeAttributeInputIndex, setActiveAttributeInputIndex] = useState<number | null>(null);
   const [currentAttributeNameQuery, setCurrentAttributeNameQuery] = useState('');
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
 
-
+  const router = useRouter();
   const { toast } = useToast();
 
   const fetchPackets = async () => {
@@ -157,7 +101,7 @@ export default function PacketsPage() {
   const handleEditPacket = (packet: RadiusPacket | null) => {
     setEditingPacket(packet ? JSON.parse(JSON.stringify(packet)) : null); // Deep copy
     setSuggestions([]);
-    setActiveSuggestionIndex(null);
+    setActiveAttributeInputIndex(null);
     setCurrentAttributeNameQuery('');
     setPastedAttributesText('');
   };
@@ -229,12 +173,11 @@ export default function PacketsPage() {
     }
   };
 
-  // Debounced fetch for attribute suggestions
   const debouncedFetchAttributeSuggestions = useCallback(
     debounce(async (query: string, forAttributeIndex: number) => {
       if (!query.trim()) {
         setSuggestions([]);
-        setActiveSuggestionIndex(forAttributeIndex);
+        setActiveAttributeInputIndex(forAttributeIndex); 
         return;
       }
       setIsFetchingSuggestions(true);
@@ -245,7 +188,7 @@ export default function PacketsPage() {
         }
         const data: string[] = await response.json();
         setSuggestions(data);
-        setActiveSuggestionIndex(forAttributeIndex);
+        setActiveAttributeInputIndex(forAttributeIndex);
       } catch (error) {
         console.error("Error fetching attribute suggestions:", error);
         setSuggestions([]);
@@ -264,25 +207,36 @@ export default function PacketsPage() {
       setEditingPacket({ ...editingPacket, attributes: updatedAttributes });
 
       if (field === 'name') {
-        setCurrentAttributeNameQuery(value); // Store the current query for the active input
-        setActiveSuggestionIndex(index); // Set current input as active for suggestions
+        setCurrentAttributeNameQuery(value);
+        setActiveAttributeInputIndex(index); 
         if (value.trim()) {
           debouncedFetchAttributeSuggestions(value, index);
         } else {
-          setSuggestions([]); // Clear suggestions if input is empty
+          setSuggestions([]); 
         }
       }
     }
   };
+  
+  const handleAttributeInputFocus = (index: number, currentValue: string) => {
+    setActiveAttributeInputIndex(index);
+    setCurrentAttributeNameQuery(currentValue);
+    if (currentValue.trim()) {
+      debouncedFetchAttributeSuggestions(currentValue, index);
+    } else {
+      setSuggestions([]);
+    }
+  };
 
-  const selectSuggestion = (index: number, suggestion: string) => {
+
+  const selectSuggestion = (attributeRowIndex: number, suggestion: string) => {
     if (editingPacket) {
       const updatedAttributes = [...editingPacket.attributes];
-      updatedAttributes[index] = { ...updatedAttributes[index], name: suggestion };
+      updatedAttributes[attributeRowIndex] = { ...updatedAttributes[attributeRowIndex], name: suggestion };
       setEditingPacket({ ...editingPacket, attributes: updatedAttributes });
     }
     setSuggestions([]);
-    setActiveSuggestionIndex(null);
+    setActiveAttributeInputIndex(null);
     setCurrentAttributeNameQuery('');
   };
 
@@ -312,7 +266,7 @@ export default function PacketsPage() {
       lastModified: new Date().toISOString(),
       tags: [],
       executionTool: 'radclient',
-      toolOptions: {} as RadClientOptions, // Initialize with empty options for the default tool
+      toolOptions: {} as RadClientOptions,
     });
   };
 
@@ -356,18 +310,16 @@ export default function PacketsPage() {
   const handleToolOptionChange = (optionKey: keyof RadClientOptions | keyof RadTestOptions, value: any) => {
     if (editingPacket && editingPacket.toolOptions) {
         let parsedValue = value;
-        // Type coercion for number inputs
         const numericFieldsClient: (keyof RadClientOptions)[] = ['count', 'requestId', 'requestsPerSecond', 'parallelRequests', 'retries', 'timeout'];
         const numericFieldsTest: (keyof RadTestOptions)[] = ['nasPortNumber'];
 
         if (editingPacket.executionTool === 'radclient' && numericFieldsClient.includes(optionKey as keyof RadClientOptions)) {
             parsedValue = value === '' ? undefined : parseInt(value, 10);
-            if (isNaN(parsedValue as number)) parsedValue = undefined; // Or handle as error
+            if (isNaN(parsedValue as number)) parsedValue = undefined; 
         } else if (editingPacket.executionTool === 'radtest' && numericFieldsTest.includes(optionKey as keyof RadTestOptions)) {
             parsedValue = value === '' ? undefined : parseInt(value, 10);
              if (isNaN(parsedValue as number)) parsedValue = undefined;
         }
-
 
       setEditingPacket({
         ...editingPacket,
@@ -395,8 +347,8 @@ export default function PacketsPage() {
     const packetToDuplicate = packets.find(p => p.id === packetId);
     if (packetToDuplicate) {
       const newPacket: RadiusPacket = {
-        ...JSON.parse(JSON.stringify(packetToDuplicate)), // Deep copy
-        id: 'new', // Mark as new
+        ...JSON.parse(JSON.stringify(packetToDuplicate)), 
+        id: 'new', 
         name: `${packetToDuplicate.name} (Copy)`,
         lastModified: new Date().toISOString(),
       };
@@ -425,6 +377,10 @@ export default function PacketsPage() {
     } else {
       toast({ title: "Error", description: "Packet not found for export.", variant: "destructive" });
     }
+  };
+
+  const handleRunPacket = (packetId: string, packetName: string) => {
+    router.push(`/execute?packetId=${packetId}&packetName=${encodeURIComponent(packetName)}`);
   };
 
 
@@ -493,6 +449,9 @@ export default function PacketsPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleRunPacket(packet.id, packet.name)} disabled={isSaving}>
+                           <PlayCircle className="mr-2 h-4 w-4" /> Run Packet
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleEditPacket(packet)} disabled={isSaving}>
                           <Edit3 className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
@@ -531,7 +490,7 @@ export default function PacketsPage() {
 
       {/* Packet Editor Dialog */}
       <Dialog open={!!editingPacket} onOpenChange={(isOpen) => !isOpen && handleEditPacket(null)}>
-        <DialogContent className="max-w-3xl"> {/* Increased width */}
+        <DialogContent className="max-w-3xl"> 
           <DialogHeader>
             <DialogTitle>{editingPacket?.id === 'new' ? 'Create New Packet' : `Edit Packet: ${editingPacket?.name}`}</DialogTitle>
             <DialogDescription>
@@ -601,12 +560,12 @@ export default function PacketsPage() {
                       </Select>
                     </div>
                     <div><Label>Shared Secret</Label><Input type="password" value={(editingPacket.toolOptions as RadClientOptions).secret || ''} onChange={e => handleToolOptionChange('secret', e.target.value)} placeholder="Packet-specific secret" /></div>
-                    <div><Label>Count</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).count || ''} onChange={e => handleToolOptionChange('count', e.target.value)} placeholder="1" /></div>
-                    <div><Label>Retries</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).retries || ''} onChange={e => handleToolOptionChange('retries', e.target.value)} placeholder="10" /></div>
-                    <div><Label>Timeout (sec)</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).timeout || ''} onChange={e => handleToolOptionChange('timeout', e.target.value)} placeholder="3" /></div>
-                    <div><Label>Requests/sec</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).requestsPerSecond || ''} onChange={e => handleToolOptionChange('requestsPerSecond', e.target.value)} placeholder="Optional" /></div>
-                    <div><Label>Parallel Requests</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).parallelRequests || ''} onChange={e => handleToolOptionChange('parallelRequests', e.target.value)} placeholder="Optional" /></div>
-                    <div><Label>Request ID</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).requestId || ''} onChange={e => handleToolOptionChange('requestId', e.target.value)} placeholder="Optional" /></div>
+                    <div><Label>Count</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).count ?? ''} onChange={e => handleToolOptionChange('count', e.target.value)} placeholder="1" /></div>
+                    <div><Label>Retries</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).retries ?? ''} onChange={e => handleToolOptionChange('retries', e.target.value)} placeholder="10" /></div>
+                    <div><Label>Timeout (sec)</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).timeout ?? ''} onChange={e => handleToolOptionChange('timeout', e.target.value)} placeholder="3" /></div>
+                    <div><Label>Requests/sec</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).requestsPerSecond ?? ''} onChange={e => handleToolOptionChange('requestsPerSecond', e.target.value)} placeholder="Optional" /></div>
+                    <div><Label>Parallel Requests</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).parallelRequests ?? ''} onChange={e => handleToolOptionChange('parallelRequests', e.target.value)} placeholder="Optional" /></div>
+                    <div><Label>Request ID</Label><Input type="number" value={(editingPacket.toolOptions as RadClientOptions).requestId ?? ''} onChange={e => handleToolOptionChange('requestId', e.target.value)} placeholder="Optional" /></div>
                     <div><Label>Protocol</Label>
                       <Select value={(editingPacket.toolOptions as RadClientOptions).protocol || 'udp'} onValueChange={val => handleToolOptionChange('protocol', val)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -638,7 +597,7 @@ export default function PacketsPage() {
                     <div><Label>User</Label><Input value={(editingPacket.toolOptions as RadTestOptions).user || ''} onChange={e => handleToolOptionChange('user', e.target.value)} /></div>
                     <div><Label>Password</Label><Input type="password" value={(editingPacket.toolOptions as RadTestOptions).password || ''} onChange={e => handleToolOptionChange('password', e.target.value)} /></div>
                     <div><Label>RADIUS Server[:Port]</Label><Input value={(editingPacket.toolOptions as RadTestOptions).radiusServer || ''} onChange={e => handleToolOptionChange('radiusServer', e.target.value)} /></div>
-                    <div><Label>NAS Port Number</Label><Input type="number" value={(editingPacket.toolOptions as RadTestOptions).nasPortNumber || ''} onChange={e => handleToolOptionChange('nasPortNumber', e.target.value)} placeholder="10" /></div>
+                    <div><Label>NAS Port Number</Label><Input type="number" value={(editingPacket.toolOptions as RadTestOptions).nasPortNumber ?? ''} onChange={e => handleToolOptionChange('nasPortNumber', e.target.value)} placeholder="10" /></div>
                     <div><Label>Shared Secret</Label><Input type="password" value={(editingPacket.toolOptions as RadTestOptions).secret || ''} onChange={e => handleToolOptionChange('secret', e.target.value)} /></div>
                     <div><Label>NAS Name</Label><Input value={(editingPacket.toolOptions as RadTestOptions).nasname || ''} onChange={e => handleToolOptionChange('nasname', e.target.value)} placeholder="Local hostname if blank" /></div>
                     <div><Label>Auth Type (-t)</Label>
@@ -701,20 +660,13 @@ export default function PacketsPage() {
                       id={`attr-name-${index}`}
                       value={attr.name}
                       onChange={(e) => handleAttributeChange(index, 'name', e.target.value)}
-                      onFocus={() => {
-                        setActiveSuggestionIndex(index);
-                        if(attr.name.trim()){
-                            debouncedFetchAttributeSuggestions(attr.name, index);
-                        } else {
-                            setSuggestions([]);
-                        }
-                      }}
+                      onFocus={() => handleAttributeInputFocus(index, attr.name)}
                       placeholder="e.g., User-Name"
                       className="font-mono"
                       disabled={isSaving || isParsingAttributes}
                       autoComplete="off"
                     />
-                     {activeSuggestionIndex === index && currentAttributeNameQuery === attr.name && suggestions.length > 0 && (
+                     {activeAttributeInputIndex === index && currentAttributeNameQuery === attr.name && suggestions.length > 0 && (
                       <Card className="absolute z-10 mt-1 w-full shadow-lg max-h-40 overflow-y-auto border">
                         <CardContent className="p-1">
                           {isFetchingSuggestions ? (
@@ -769,5 +721,4 @@ export default function PacketsPage() {
     </div>
   );
 }
-
     

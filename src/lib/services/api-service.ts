@@ -1,155 +1,119 @@
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+
+// import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'; // Not used in client-side simulation
 
 interface ApiRequestConfig {
   url: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   headers?: Record<string, string>;
   body?: any;
-  timeout?: number;
-  validateStatus?: (status: number) => boolean;
+  timeout?: number; // Milliseconds
 }
 
-interface ApiResponse<T = any> {
+export interface ApiResponse<T = any> { // Exported for ExecutionConsolePage
   status: number;
   headers: Record<string, string>;
   data: T;
-  error?: Error;
+  error?: string; // Changed to string for easier simulation
 }
 
 interface ValidationRule {
   path: string;
   operator: 'equals' | 'contains' | 'exists' | 'matches';
   value?: any;
-  pattern?: RegExp;
+  pattern?: RegExp; // Not used in mock
 }
 
 export class ApiService {
-  private client: AxiosInstance;
+  // private client: AxiosInstance; // Not used in mock
 
-  constructor(baseConfig: AxiosRequestConfig = {}) {
-    this.client = axios.create({
-      timeout: 30000, // Default timeout of 30 seconds
-      validateStatus: (status) => true, // Don't throw on any status code
-      ...baseConfig,
+  constructor() {
+    // this.client = axios.create({ ... }); // Real client setup
+  }
+
+  // SIMULATED: This is a mock API request. Real implementation would use axios or fetch.
+  async makeRequest<T = any>(config: ApiRequestConfig): Promise<ApiResponse<T>> {
+    console.log(`[API_MOCK] Simulating API request: ${config.method} ${config.url}`);
+    if(config.headers) console.log(`[API_MOCK] Headers: ${JSON.stringify(config.headers)}`);
+    if(config.body) console.log(`[API_MOCK] Body: ${JSON.stringify(config.body)}`);
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        if (config.url.includes('fail_api_request')) {
+          console.warn('[API_MOCK] Simulated API request failure.');
+          resolve({
+            status: 500,
+            headers: { 'content-type': 'application/json', 'x-simulated-error': 'true' },
+            data: { message: 'Simulated internal server error' } as any,
+            error: 'Simulated: Internal Server Error',
+          });
+          return;
+        }
+
+        let responseData: any;
+        let status = 200;
+
+        if (config.method === 'POST' || config.method === 'PUT') {
+          status = config.method === 'POST' ? 201 : 200;
+          responseData = { success: true, message: `Resource ${config.method === 'POST' ? 'created' : 'updated'} successfully`, id: `sim_${Date.now()}`, data: config.body || {} };
+        } else if (config.method === 'DELETE') {
+          status = 204; // No content typically
+          responseData = null;
+        } else { // GET, PATCH
+          responseData = {
+            id: `sim_resource_${Math.random().toString(36).substring(7)}`,
+            name: 'Simulated Resource Name',
+            value: Math.random() * 100,
+            timestamp: new Date().toISOString(),
+            nested: { info: 'Some nested simulated data' },
+          };
+        }
+        
+        console.log(`[API_MOCK] Simulated API request successful. Status: ${status}`);
+        resolve({
+          status,
+          headers: { 'content-type': 'application/json', 'x-simulated-by': 'RadiusEdgeMockAPI' },
+          data: responseData as T,
+        });
+      }, 60 + Math.random() * 120);
     });
   }
 
-  async makeRequest<T = any>(config: ApiRequestConfig): Promise<ApiResponse<T>> {
-    try {
-      const axiosConfig: AxiosRequestConfig = {
-        url: config.url,
-        method: config.method,
-        headers: config.headers,
-        data: config.body,
-        timeout: config.timeout,
-        validateStatus: config.validateStatus,
-      };
-
-      const response: AxiosResponse<T> = await this.client.request(axiosConfig);
-
-      return {
-        status: response.status,
-        headers: response.headers as Record<string, string>,
-        data: response.data,
-      };
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        return {
-          status: error.response?.status || 0,
-          headers: error.response?.headers as Record<string, string> || {},
-          data: error.response?.data as T,
-          error: new Error(error.message),
-        };
-      }
-
-      return {
-        status: 0,
-        headers: {},
-        data: {} as T,
-        error: error instanceof Error ? error : new Error('Unknown error occurred'),
-      };
-    }
-  }
-
+  // SIMULATED: Mock validation. Real implementation would use the actual response.
   validateResponse<T = any>(
     response: ApiResponse<T>,
     expectedStatus?: number | number[],
-    validationRules?: ValidationRule[]
+    validationRules?: ValidationRule[] // Not deeply implemented in mock
   ): boolean {
-    // Check for errors
+    console.log(`[API_MOCK] Simulating validation of response (Status: ${response.status})`);
     if (response.error) {
+      console.log('[API_MOCK] Validation failed due to response error.');
       return false;
     }
 
-    // Validate status code if expected status is provided
     if (expectedStatus) {
       if (Array.isArray(expectedStatus)) {
         if (!expectedStatus.includes(response.status)) {
+           console.log(`[API_MOCK] Validation failed: Status ${response.status} not in expected [${expectedStatus.join(', ')}].`);
           return false;
         }
       } else if (response.status !== expectedStatus) {
+        console.log(`[API_MOCK] Validation failed: Status ${response.status} !== expected ${expectedStatus}.`);
         return false;
       }
     }
-
-    // If no validation rules, we're done
-    if (!validationRules || validationRules.length === 0) {
-      return true;
+    // Basic mock validation for rules
+    if (validationRules && validationRules.length > 0) {
+        // For mock, let's just assume rules pass if no major error
+        console.log(`[API_MOCK] Mock validation assumes rules passed for status ${response.status}.`);
     }
-
-    // Check each validation rule
-    return validationRules.every((rule) => {
-      const value = this.getValueByPath(response.data, rule.path);
-
-      switch (rule.operator) {
-        case 'equals':
-          return value === rule.value;
-
-        case 'contains':
-          if (typeof value === 'string') {
-            return value.includes(String(rule.value));
-          }
-          if (Array.isArray(value)) {
-            return value.includes(rule.value);
-          }
-          return false;
-
-        case 'exists':
-          return value !== undefined && value !== null;
-
-        case 'matches':
-          if (typeof value === 'string' && rule.pattern) {
-            return rule.pattern.test(value);
-          }
-          return false;
-
-        default:
-          return false;
-      }
-    });
+    console.log('[API_MOCK] Simulated validation successful.');
+    return true;
   }
 
-  private getValueByPath(obj: any, path: string): any {
-    return path.split('.').reduce((current, key) => {
-      return current && current[key] !== undefined ? current[key] : undefined;
-    }, obj);
-  }
-
-  setBaseUrl(url: string): void {
-    this.client.defaults.baseURL = url;
-  }
-
-  setDefaultHeaders(headers: Record<string, string>): void {
-    this.client.defaults.headers.common = {
-      ...this.client.defaults.headers.common,
-      ...headers,
-    };
-  }
-
-  setDefaultTimeout(timeout: number): void {
-    this.client.defaults.timeout = timeout;
-  }
+  // Methods below are not essential for mock but kept for signature compatibility
+  setBaseUrl(url: string): void { console.log(`[API_MOCK] Base URL set to: ${url} (no-op in mock)`); }
+  setDefaultHeaders(headers: Record<string, string>): void { console.log(`[API_MOCK] Default headers set: ${JSON.stringify(headers)} (no-op in mock)`); }
+  setDefaultTimeout(timeout: number): void { console.log(`[API_MOCK] Default timeout set to: ${timeout}ms (no-op in mock)`); }
 }
 
-// Create a singleton instance
-export const apiService = new ApiService(); 
+export const apiService = new ApiService();

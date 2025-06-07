@@ -33,70 +33,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
 import { parseRadiusAttributesFromString, ParseRadiusAttributesInput, ParseRadiusAttributesOutput } from '@/ai/flows/parse-radius-attributes-flow';
-import type { RadiusPacket } from '@/app/packets/page'; 
+import type { RadiusPacket, Scenario, ScenarioStep, ScenarioStepType, ScenarioVariable, ExpectedReplyAttribute, ApiHeader } from '@/lib/types'; // Import from lib/types
+import Link from 'next/link';
 
-export type ScenarioStepType = 'radius' | 'sql' | 'delay' | 'loop_start' | 'loop_end' | 'conditional_start' | 'conditional_end' | 'api_call' | 'log_message';
-
-export interface ExpectedReplyAttribute {
-  id: string;
-  name: string;
-  value: string;
-}
-
-export interface ApiHeader {
-  id: string;
-  name: string;
-  value: string;
-}
-
-export interface ScenarioStep {
-  id: string;
-  type: ScenarioStepType;
-  name: string;
-  details: Record<string, any> & {
-    // RADIUS
-    packet_id?: string;
-    expectedAttributes?: ExpectedReplyAttribute[];
-    timeout?: number;
-    retries?: number;
-    // SQL
-    query?: string;
-    expect_column?: string;
-    expect_value?: string;
-    connection?: string;
-    // Delay
-    duration_ms?: number;
-    // Loop
-    iterations?: number;
-    // Conditional / Loop condition
-    condition?: string;
-    // API Call
-    url?: string;
-    method?: 'GET' | 'POST';
-    headers?: ApiHeader[];
-    requestBody?: string;
-    mockResponseBody?: string; 
-    // Log Message
-    message?: string;
-  };
-}
-
-export interface ScenarioVariable {
-  id: string;
-  name: string;
-  type: 'static' | 'random_string' | 'random_number' | 'list';
-  value: string;
-}
-
-export interface Scenario { 
-  id: string;
-  name: string;
-  description: string;
-  variables: ScenarioVariable[];
-  steps: ScenarioStep[];
-  lastModified: string;
-  tags: string[];
-}
 
 const stepIcons: Record<ScenarioStepType, React.ElementType> = {
   radius: FileText,
@@ -133,6 +72,7 @@ export default function ScenariosPage() {
   const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [pastedAttributesText, setPastedAttributesText] = useState('');
+  const [currentStepIndexForPasting, setCurrentStepIndexForPasting] = useState<number | null>(null);
   const [isParsingAttributes, setIsParsingAttributes] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -171,6 +111,7 @@ export default function ScenariosPage() {
         steps: Array.isArray(s.steps) ? s.steps.map(step => ({
           ...step,
           details: step.details || {},
+          // Ensure expectedAttributes and headers are arrays even if missing from DB
           expectedAttributes: Array.isArray(step.details?.expectedAttributes) ? step.details.expectedAttributes : [],
           headers: Array.isArray(step.details?.headers) ? step.details.headers : [],
         })) : [],
@@ -214,12 +155,12 @@ export default function ScenariosPage() {
     const templateId = searchParams.get('template');
     const openScenarioId = searchParams.get('open');
 
-    if (openScenarioId && scenarios.length > 0) {
+    if (openScenarioId && scenarios.length > 0 && !editingScenario) { // Avoid re-opening if already editing
         const scenarioToOpen = scenarios.find(s => s.id === openScenarioId);
         if (scenarioToOpen) {
             handleEditScenario(scenarioToOpen);
         }
-    } else if (templateId && scenarios.length === 0 && !isLoading) { 
+    } else if (templateId && scenarios.length === 0 && !isLoading && !editingScenario) { 
         const templateName = templateId === '3gpp-auth' ? '3GPP Authentication (from template)' :
                            templateId === 'wifi-eap' ? 'Wi-Fi EAP-TTLS (from template)' :
                            'New Scenario (from template)';
@@ -232,6 +173,7 @@ export default function ScenariosPage() {
   const handleEditScenario = (scenario: Scenario | null) => {
     setEditingScenario(scenario ? JSON.parse(JSON.stringify(scenario)) : null);
     setPastedAttributesText('');
+    setCurrentStepIndexForPasting(null);
     if (scenario) { 
       fetchAvailablePackets();
     }
@@ -331,13 +273,13 @@ export default function ScenariosPage() {
   const addStep = (type: ScenarioStepType) => {
     if (editingScenario) {
       let stepName = 'New Step';
-      let stepDetails: ScenarioStep['details'] = {};
+      let stepDetails: ScenarioStep['details'] = {}; // Initialize as empty object
       if (type === 'radius') {
         stepName = 'New RADIUS Request';
         stepDetails = { packet_id: availablePackets.length > 0 ? availablePackets[0].id : '', expectedAttributes: [], timeout: 3000, retries: 2 };
       } else if (type === 'sql') {
         stepName = 'New SQL Validation';
-        stepDetails = { query: '', expect_column: '', expect_value: '', connection: '' };
+        stepDetails = { query: '', expect_column: '', expect_value: '', connection_id: '' }; // Ensure connection_id
       } else if (type === 'delay') {
         stepName = 'New Delay';
         stepDetails = { duration_ms: 1000 };
@@ -345,12 +287,12 @@ export default function ScenariosPage() {
         stepName = 'Loop Start';
         stepDetails = { iterations: 3, condition: '' };
       } else if (type === 'loop_end') {
-        stepName = 'Loop End';
+        stepName = 'Loop End'; // No specific details needed typically
       } else if (type === 'conditional_start') {
         stepName = 'Conditional Start';
         stepDetails = { condition: '' };
       } else if (type === 'conditional_end') {
-        stepName = 'Conditional End';
+        stepName = 'Conditional End'; // No specific details needed
       } else if (type === 'api_call') {
         stepName = 'New API Call';
         stepDetails = { url: '', method: 'GET', headers: [{id: `header_${Date.now()}`, name: 'Content-Type', value: 'application/json'}], requestBody: '', mockResponseBody: '{ "success": true }' };
@@ -358,7 +300,6 @@ export default function ScenariosPage() {
         stepName = 'New Log Message';
         stepDetails = { message: 'Log: ' };
       }
-
 
       setEditingScenario(prev => prev ? {
         ...prev,
@@ -380,7 +321,7 @@ export default function ScenariosPage() {
      if (editingScenario) {
       const updatedSteps = [...editingScenario.steps];
       if (field === 'details') {
-         updatedSteps[stepIndex].details = {...updatedSteps[stepIndex].details, ...value};
+         updatedSteps[stepIndex].details = {...(updatedSteps[stepIndex].details || {}), ...value}; // Ensure details exists
       } else {
           (updatedSteps[stepIndex] as any)[field] = value;
       }
@@ -467,10 +408,16 @@ export default function ScenariosPage() {
       }
     }
   };
+  
+  const handlePrepareParsePastedAttributes = (stepIndex: number) => {
+    setPastedAttributesText(''); // Clear previous text
+    setCurrentStepIndexForPasting(stepIndex); // Keep track of which step's attributes we are parsing for
+  };
 
-  const handleParsePastedAttributes = async (stepIndex: number) => {
-    if (!editingScenario || !pastedAttributesText.trim()) {
-      toast({ title: "Nothing to parse", description: "Please paste attribute data into the text area.", variant: "destructive" });
+
+  const handleParsePastedAttributes = async () => {
+    if (currentStepIndexForPasting === null || !editingScenario || !pastedAttributesText.trim()) {
+      toast({ title: "Nothing to parse", description: "Please paste attribute data into the text area for the correct step.", variant: "destructive" });
       return;
     }
     setIsParsingAttributes(true);
@@ -485,12 +432,15 @@ export default function ScenariosPage() {
       }));
 
       const updatedSteps = [...editingScenario.steps];
-      const step = updatedSteps[stepIndex];
+      const step = updatedSteps[currentStepIndexForPasting];
       if (step.type === 'radius') {
         step.details.expectedAttributes = newExpectedAttributes;
         setEditingScenario({ ...editingScenario, steps: updatedSteps });
-        setPastedAttributesText('');
-        toast({ title: "Attributes Parsed", description: `${newExpectedAttributes.length} attributes added/updated.` });
+        setPastedAttributesText(''); // Clear text area after successful parse
+        setCurrentStepIndexForPasting(null); // Reset step index
+        toast({ title: "Attributes Parsed", description: `${newExpectedAttributes.length} attributes added/updated for step "${step.name}".` });
+      } else {
+        toast({ title: "Incorrect Step Type", description: "Can only parse attributes for RADIUS type steps.", variant: "destructive" });
       }
     } catch (error) {
       console.error("FRONTEND: Error parsing attributes:", error);
@@ -790,6 +740,7 @@ export default function ScenariosPage() {
                   <div className="space-y-4">
                     {editingScenario.steps.map((step, index) => {
                       const StepIcon = stepIcons[step.type];
+                      const details = step.details || {}; // Ensure details is not undefined
                       return (
                         <Card key={step.id || index} className="p-4 relative group bg-card hover:shadow-md transition-shadow">
                            <Button variant="ghost" size="icon" className={cn("absolute top-2 right-10 text-muted-foreground hover:text-foreground h-7 w-7 opacity-50 group-hover:opacity-100 cursor-grab")} aria-label="Drag to reorder (not implemented)" disabled={isSaving}>
@@ -808,7 +759,7 @@ export default function ScenariosPage() {
                               <div>
                                 <Label>Packet Template:</Label>
                                 <Select 
-                                  value={step.details.packet_id} 
+                                  value={details.packet_id || ''} 
                                   onValueChange={(v) => handleStepChange(index, 'details', {packet_id: v})} 
                                   disabled={isSaving || isLoadingPackets}
                                 >
@@ -832,7 +783,8 @@ export default function ScenariosPage() {
                               <div className="space-y-2 pt-2">
                                 <Label className="font-medium">Expected Reply Attributes (Paste or Add Manually):</Label>
                                 <Textarea
-                                  value={pastedAttributesText}
+                                  value={currentStepIndexForPasting === index ? pastedAttributesText : ''}
+                                  onFocus={() => handlePrepareParsePastedAttributes(index)}
                                   onChange={(e) => setPastedAttributesText(e.target.value)}
                                   placeholder={'User-Name = "testuser"\nFramed-IP-Address = 10.0.0.1\nAcct-Status-Type = Start'}
                                   rows={3}
@@ -842,16 +794,16 @@ export default function ScenariosPage() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleParsePastedAttributes(index)}
-                                  disabled={isSaving || isParsingAttributes || !pastedAttributesText.trim()}
+                                  onClick={handleParsePastedAttributes}
+                                  disabled={isSaving || isParsingAttributes || !pastedAttributesText.trim() || currentStepIndexForPasting !== index}
                                   className="w-full"
                                 >
-                                  {isParsingAttributes ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
-                                  Parse from Text & Add/Replace
+                                  {isParsingAttributes && currentStepIndexForPasting === index ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
+                                  Parse & Add/Replace for This Step
                                 </Button>
                               </div>
 
-                              {(step.details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => (
+                              {(details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => (
                                 <div key={attr.id} className="flex items-end gap-2 p-2 border rounded-md bg-muted/20">
                                   <div className="flex-1">
                                     <Label htmlFor={`exp-attr-name-${attr.id}`} className="text-xs">Attribute Name</Label>
@@ -883,28 +835,28 @@ export default function ScenariosPage() {
                               </Button>
 
                               <div className="grid grid-cols-2 gap-2 pt-2">
-                                <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={step.details.timeout || ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })} disabled={isSaving}/></div>
-                                <div><Label>Retries:</Label><Input type="number" placeholder="2" value={step.details.retries || ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })} disabled={isSaving}/></div>
+                                <div><Label>Timeout (ms):</Label><Input type="number" placeholder="3000" value={details.timeout ?? ''} onChange={(e) => handleStepChange(index, 'details', {timeout: parseInt(e.target.value) || undefined })} disabled={isSaving}/></div>
+                                <div><Label>Retries:</Label><Input type="number" placeholder="2" value={details.retries ?? ''} onChange={(e) => handleStepChange(index, 'details', {retries: parseInt(e.target.value) || undefined })} disabled={isSaving}/></div>
                               </div>
                             </div>
                           )}
 
                           {step.type === 'sql' && (
                             <div className="space-y-2 pl-7 text-sm">
-                              <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={step.details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} disabled={isSaving}/>
-                              <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${step.details.expect_column || ''}=${step.details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} disabled={isSaving}/>
-                              <Label>DB Connection:</Label><Input placeholder="Default DB (or ID from DB settings)" value={step.details.connection || ''} onChange={(e) => handleStepChange(index, 'details', {connection: e.target.value})} disabled={isSaving}/>
+                              <Label>SQL Query:</Label><Textarea placeholder="SELECT * FROM users WHERE username = '${user_variable}'" value={details.query || ''} onChange={(e) => handleStepChange(index, 'details', {query: e.target.value})} disabled={isSaving}/>
+                              <Label>Expected Result (column=value):</Label><Input placeholder="e.g., status=active" value={`${details.expect_column || ''}=${details.expect_value || ''}`} onChange={(e) => { const parts = e.target.value.split('='); handleStepChange(index, 'details', {expect_column: parts[0], expect_value: parts[1] || ''}) }} disabled={isSaving}/>
+                              <Label>DB Connection ID:</Label><Input placeholder="ID from DB settings" value={details.connection_id || ''} onChange={(e) => handleStepChange(index, 'details', {connection_id: e.target.value})} disabled={isSaving}/>
                             </div>
                           )}
                           {step.type === 'delay' && (
                             <div className="space-y-2 pl-7 text-sm">
-                              <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={step.details.duration_ms || ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} disabled={isSaving}/>
+                              <Label>Duration (ms):</Label><Input type="number" placeholder="1000" value={details.duration_ms ?? ''} onChange={(e) => handleStepChange(index, 'details', {duration_ms: parseInt(e.target.value) || undefined})} disabled={isSaving}/>
                             </div>
                           )}
                           {(step.type === 'loop_start' || step.type === 'conditional_start') && (
                             <div className="space-y-2 pl-7 text-sm">
-                              {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={step.details.iterations || ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} disabled={isSaving}/></div>}
-                              <Label>Condition (Descriptive):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={step.details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})} disabled={isSaving}/>
+                              {step.type === 'loop_start' && <div><Label>Iterations:</Label><Input type="number" placeholder="3" value={details.iterations ?? ''} onChange={(e) => handleStepChange(index, 'details', {iterations: parseInt(e.target.value) || undefined})} disabled={isSaving}/></div>}
+                              <Label>Condition (Descriptive):</Label><Input placeholder="e.g., ${var_name} == 'value' or response_code == 5" value={details.condition || ''} onChange={(e) => handleStepChange(index, 'details', {condition: e.target.value})} disabled={isSaving}/>
                               <p className="text-xs text-muted-foreground">Note: Conditional & loop execution logic is not implemented in this prototype.</p>
                             </div>
                           )}
@@ -914,20 +866,23 @@ export default function ScenariosPage() {
 
                           {step.type === 'api_call' && (
                             <div className="space-y-3 pl-7 text-sm">
-                              <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={step.details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })} disabled={isSaving}/></div>
+                              <div><Label>URL:</Label><Input placeholder="https://api.example.com/data" value={details.url || ''} onChange={(e) => handleStepChange(index, 'details', { url: e.target.value })} disabled={isSaving}/></div>
                               <div>
                                 <Label>Method:</Label>
-                                <Select value={step.details.method || 'GET'} onValueChange={(v) => handleStepChange(index, 'details', {method: v as 'GET' | 'POST'})} disabled={isSaving}>
+                                <Select value={details.method || 'GET'} onValueChange={(v) => handleStepChange(index, 'details', {method: v as any})} disabled={isSaving}>
                                   <SelectTrigger><SelectValue /></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="GET">GET</SelectItem>
                                     <SelectItem value="POST">POST</SelectItem>
+                                    <SelectItem value="PUT">PUT</SelectItem>
+                                    <SelectItem value="DELETE">DELETE</SelectItem>
+                                    <SelectItem value="PATCH">PATCH</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
                                <div>
                                 <Label className="font-medium">Headers:</Label>
-                                {(step.details.headers || []).map((header: ApiHeader) => (
+                                {(details.headers || []).map((header: ApiHeader) => (
                                     <div key={header.id} className="flex items-end gap-2 mt-1 p-2 border rounded-md bg-muted/20">
                                     <div className="flex-1">
                                         <Label htmlFor={`header-name-${header.id}`} className="text-xs">Header Name</Label>
@@ -942,10 +897,10 @@ export default function ScenariosPage() {
                                 ))}
                                 <Button variant="outline" size="sm" onClick={() => addApiHeader(index)} className="mt-2" disabled={isSaving}><PlusCircle className="mr-2 h-3 w-3" /> Add Header</Button>
                                </div>
-                              {step.details.method === 'POST' && (
-                                <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={step.details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3} disabled={isSaving}/></div>
+                              {(details.method === 'POST' || details.method === 'PUT' || details.method === 'PATCH') && (
+                                <div><Label>Request Body (JSON):</Label><Textarea placeholder='{ "key": "value" }' value={details.requestBody || ''} onChange={(e) => handleStepChange(index, 'details', { requestBody: e.target.value })} rows={3} disabled={isSaving}/></div>
                               )}
-                              <div><Label>Mock Response Body (JSON for simulation):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={step.details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3} disabled={isSaving}/></div>
+                              <div><Label>Mock Response Body (JSON for simulation):</Label><Textarea placeholder='{ "success": true, "data": {} }' value={details.mockResponseBody || ''} onChange={(e) => handleStepChange(index, 'details', { mockResponseBody: e.target.value })} rows={3} disabled={isSaving}/></div>
                               <p className="text-xs text-muted-foreground">Note: API calls are simulated in this prototype.</p>
                             </div>
                           )}
@@ -953,7 +908,7 @@ export default function ScenariosPage() {
                           {step.type === 'log_message' && (
                             <div className="space-y-2 pl-7 text-sm">
                                 <Label>Message to Log:</Label>
-                                <Textarea placeholder="Enter message. You can use ${variable_name}." value={step.details.message || ''} onChange={(e) => handleStepChange(index, 'details', {message: e.target.value})} rows={2} disabled={isSaving}/>
+                                <Textarea placeholder="Enter message. You can use ${variable_name}." value={details.message || ''} onChange={(e) => handleStepChange(index, 'details', {message: e.target.value})} rows={2} disabled={isSaving}/>
                             </div>
                           )}
 
@@ -983,4 +938,4 @@ export default function ScenariosPage() {
 }
 
 // END OF FILE - DO NOT ADD ANYTHING AFTER THIS LINE
-
+    

@@ -1,333 +1,535 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Play, StopCircle, DownloadCloud, FileArchive, Loader2, Terminal, Server, FileText } from 'lucide-react';
+import { Play, StopCircle, DownloadCloud, FileArchive, Loader2, Terminal, Server, FileText, ListChecks } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import type { ServerConfigForExec, LogEntry, LogLevel } from '@/lib/types';
+import type { ServerConfigForExec, LogEntry, LogLevel, Scenario, ScenarioStep, ScenarioVariable, SshExecutionStep, ServerConfig as FullServerConfig, RadiusPacket, ExpectedReplyAttribute, ApiHeader } from '@/lib/types';
 import { useToast } from "@/hooks/use-toast";
 import type { TestResult } from '@/app/results/page';
-import type { Scenario } from '@/app/scenarios/page';
-import type { ServerConfig } from '@/app/settings/servers/page';
-
-// REAL_IMPLEMENTATION_NOTE: The mockServerConfigs object is used to SIMULATE fetching server configurations
-// for SSH preamble steps. In a real application, when a scenario starts, it would:
-// 1. Fetch the target ServerConfig from the backend using `currentRunningServerId`.
-// 2. Extract `scenarioExecutionSshCommands` from that fetched config.
-// 3. A backend execution engine would then perform live SSH using these commands.
-// This mock is purely for frontend UI demonstration of the SSH preamble logging.
-const mockServerConfigs: Record<string, ServerConfigForExec> = {
-  "server_3gpp": {
-    id: "server_3gpp",
-    name: "3GPP Test Server (Mock)",
-    scenarioExecutionSshCommands: [
-      { id: "ssh1", name: "Connect to Jumpbox", command: "ssh user@jump.example.com -p 2222", isEnabled: true, expectedOutputContains: "Connected to jump.example.com" },
-      { id: "ssh2", name: "SSH to Target RADIUS", command: "ssh admin@10.0.1.100", isEnabled: true, expectedOutputContains: "Authentication successful" },
-      { id: "ssh3", name: "Source environment variables", command: "source /opt/radius/env.sh", isEnabled: true, expectedOutputContains: "Environment sourced" },
-      { id: "ssh4", name: "Disabled SSH Step", command: "echo 'This step is disabled'", isEnabled: false, expectedOutputContains: "never_match_this"},
-      { id: "ssh5", name: "Step that might fail validation", command: "check_critical_service.sh", isEnabled: true, expectedOutputContains: "SERVICE_OK" },
-    ]
-  },
-  "server_wifi": {
-    id: "server_wifi",
-    name: "WiFi Test Server (Mock)",
-    scenarioExecutionSshCommands: []
-  }
-};
+import { sshService, radiusService, dbService, apiService } from '@/lib/services';
 
 const initialLogEntry: LogEntry = {
-  id: 'init_log',
+  id: `init_log_${Date.now()}`,
   timestamp: new Date().toISOString(),
   level: 'INFO',
-  message: 'Execution console initialized. Select a scenario and server to begin, or one may be auto-started if launched from the dashboard.'
+  message: 'Execution console initialized. Select a scenario and server to begin, or a packet/scenario might be auto-started if launched from another page.'
 };
 
 
 export default function ExecutionConsolePage() {
   const searchParams = useSearchParams();
+  const { toast } = useToast();
+  const router = useRouter();
+
   const [logs, setLogs] = useState<LogEntry[]>([initialLogEntry]);
   const [isRunning, setIsRunning] = useState(false);
   
-  const [currentRunningScenarioName, setCurrentRunningScenarioName] = useState<string | null>(null);
-  const [currentRunningServerId, setCurrentRunningServerId] = useState<string | null>(null);
-  const [currentRunningServerName, setCurrentRunningServerName] = useState<string | null>(null);
+  const [currentScenario, setCurrentScenario] = useState<Scenario | null>(null);
+  const [currentServerConfig, setCurrentServerConfig] = useState<FullServerConfig | null>(null);
+  const [currentPacketForRun, setCurrentPacketForRun] = useState<RadiusPacket | null>(null); // For "Run Packet"
   
   const [currentTestExecutionId, setCurrentTestExecutionId] = useState<string | null>(null);
   const [isInteractingWithApi, setIsInteractingWithApi] = useState(false);
 
   const [availableScenarios, setAvailableScenarios] = useState<Scenario[]>([]);
-  const [availableServers, setAvailableServers] = useState<ServerConfig[]>([]);
+  const [availableServers, setAvailableServers] = useState<FullServerConfig[]>([]);
   const [selectedScenarioIdForDropdown, setSelectedScenarioIdForDropdown] = useState<string | null>(null);
   const [selectedServerIdForDropdown, setSelectedServerIdForDropdown] = useState<string | null>(null);
   const [isLoadingScenarios, setIsLoadingScenarios] = useState(true);
   const [isLoadingServers, setIsLoadingServers] = useState(true);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const { toast } = useToast();
+  const executionStateRef = useRef({ isRunning: false, currentTestExecutionId: '' }); // For managing async operations correctly
 
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoadingScenarios(true);
-      setIsLoadingServers(true);
-      try {
-        const scenariosRes = await fetch('/api/scenarios');
-        if (scenariosRes.ok) setAvailableScenarios(await scenariosRes.json());
-        else { console.error("Failed to fetch scenarios for execution console"); toast({title:"Error", description:"Could not load scenarios.", variant: "destructive"});}
-      } catch (e) { console.error("Error fetching scenarios", e); toast({title:"Error", description:"Could not load scenarios.", variant: "destructive"});}
-      finally { setIsLoadingScenarios(false); }
+    executionStateRef.current.isRunning = isRunning;
+    executionStateRef.current.currentTestExecutionId = currentTestExecutionId || '';
+  }, [isRunning, currentTestExecutionId]);
 
-      try {
-        const serversRes = await fetch('/api/settings/servers');
-        if (serversRes.ok) setAvailableServers(await serversRes.json());
-        else { console.error("Failed to fetch servers for execution console"); toast({title:"Error", description:"Could not load servers.", variant: "destructive"});}
-      } catch (e) { console.error("Error fetching servers", e); toast({title:"Error", description:"Could not load servers.", variant: "destructive"});}
-      finally { setIsLoadingServers(false); }
+  const addLogEntryToBatchAndState = useCallback((
+    logData: Omit<LogEntry, 'id' | 'testExecutionId' | 'timestamp'> & { timestamp?: string },
+    batchRef: React.MutableRefObject<Omit<LogEntry, 'id' | 'testExecutionId'>[]>
+  ) => {
+    const newLogEntryBase = {
+        timestamp: logData.timestamp || new Date().toISOString(),
+        level: logData.level,
+        message: logData.message,
+        rawDetails: logData.rawDetails,
     };
-    fetchData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    batchRef.current.push(newLogEntryBase);
+    setLogs(prevLogs => [...prevLogs, { ...newLogEntryBase, id: `sim_log_${Date.now()}_${Math.random().toString(36).substring(2,9)}` }]);
   }, []);
 
 
-  const handleStartExecution = async (scenarioName: string, serverId: string, serverName: string) => {
-    if (isRunning || isInteractingWithApi) return;
-
-    console.log(`FRONTEND_EXEC: Starting execution for Scenario: ${scenarioName}, ServerID: ${serverId}, ServerName: ${serverName}`);
+  const saveLogsAndExecutionRecord = useCallback(async (
+    logBatch: Omit<LogEntry, 'id' | 'testExecutionId'>[],
+    executionId: string | null,
+    finalStatus: 'Completed' | 'Failed' | 'Aborted',
+    scenarioName?: string,
+    serverName?: string
+  ) => {
+    if (!executionId) return;
     setIsInteractingWithApi(true);
-    setLogs([ { id: `start-${Date.now()}`, timestamp: new Date().toISOString(), level: 'INFO', message: `Initializing scenario: ${scenarioName} on server ${serverName}...` } ]);
+    console.log(`FRONTEND_EXEC: Saving logs and updating execution record for ID: ${executionId}, Status: ${finalStatus}`);
+
+    try {
+      if (logBatch.length > 0) {
+        const logSaveResponse = await fetch('/api/logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ testExecutionId: executionId, logs: logBatch }),
+        });
+        if (!logSaveResponse.ok) {
+          const errorText = await logSaveResponse.text();
+          console.error(`FRONTEND_EXEC: Failed to save logs: "${errorText}"`);
+          toast({ title: "Log Save Error", description: `Failed to save logs. Server said: ${errorText.substring(0,100)}`, variant: "destructive"});
+        } else {
+          console.log("FRONTEND_EXEC: Logs saved successfully for execution ID:", executionId);
+        }
+      }
+
+      let resultIdForExecution: string | undefined = undefined;
+      if (scenarioName && serverName && (finalStatus === 'Completed' || finalStatus === 'Failed')) {
+        const resultStatusMap = { 'Completed': 'Pass', 'Failed': 'Fail', 'Aborted': 'Warning' };
+        const resultToPost: Omit<TestResult, 'id' | 'timestamp'> & { timestamp: string } = {
+          scenarioName: scenarioName,
+          status: resultStatusMap[finalStatus as 'Completed' | 'Failed'], // Only Pass/Fail for now
+          timestamp: new Date().toISOString(),
+          latencyMs: Math.floor(Math.random() * (450 - 50 + 1)) + 50, // Simulated
+          server: serverName,
+          details: { executionId: executionId, simulatedLogCount: logBatch.length },
+        };
+        const postResultResponse = await fetch('/api/results', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(resultToPost),
+        });
+        if (postResultResponse.ok) {
+          const newTestResult = await postResultResponse.json();
+          resultIdForExecution = newTestResult.id;
+          console.log("FRONTEND_EXEC: Test result summary saved:", newTestResult);
+        } else {
+          const errorText = await postResultResponse.text();
+          console.error(`FRONTEND_EXEC: Failed to save test result summary: "${errorText}"`);
+           toast({ title: "Result Save Error", description: `Failed to save test result summary. Server said: ${errorText.substring(0,100)}`, variant: "destructive"});
+        }
+      }
+
+      const executionUpdatePayload: { endTime: string; status: string; resultId?: string } = {
+        endTime: new Date().toISOString(),
+        status: finalStatus,
+      };
+      if (resultIdForExecution) executionUpdatePayload.resultId = resultIdForExecution;
+
+      const execUpdateResponse = await fetch(`/api/executions/${executionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(executionUpdatePayload),
+      });
+      if (!execUpdateResponse.ok) {
+         const errorText = await execUpdateResponse.text();
+        console.error(`FRONTEND_EXEC: Failed to update execution record: "${errorText}"`);
+        toast({ title: "Execution Update Error", description: `Failed to update execution record. Server said: ${errorText.substring(0,100)}`, variant: "destructive"});
+      } else {
+        const updatedExec = await execUpdateResponse.json();
+        console.log("FRONTEND_EXEC: Execution record updated:", updatedExec);
+      }
+
+      toast({ title: `Execution ${finalStatus}`, description: `Scenario processing ${finalStatus.toLowerCase()}. Logs and results (if applicable) saved.` });
+    } catch (error) {
+      console.error("FRONTEND_EXEC: Error in saveLogsAndExecutionRecord:", error);
+      toast({ title: "API Error", description: `Could not save all execution data to backend: ${(error as Error).message}`, variant: "destructive" });
+    } finally {
+      setIsInteractingWithApi(false);
+    }
+  }, [toast]);
+
+
+  const resolveVariable = useCallback((value: string, scenarioVariables: ScenarioVariable[]): string => {
+    if (typeof value !== 'string') return String(value);
+    // Basic variable substitution: ${varName}
+    // For more complex scenarios, a more robust templating engine might be needed.
+    return value.replace(/\${(.*?)}/g, (match, varName) => {
+      const variable = scenarioVariables.find(v => v.name === varName);
+      // SIMULATED: Variable resolution logic (e.g., random values based on type)
+      if (variable) {
+        if (variable.type === 'random_string') return `rand_str_${Math.random().toString(36).substring(2, 8)}`;
+        if (variable.type === 'random_number') return String(Math.floor(Math.random() * 10000));
+        return variable.value;
+      }
+      return match; // If variable not found, return the placeholder
+    });
+  }, []);
+
+
+  const startScenarioExecution = useCallback(async (scenario: Scenario, server: FullServerConfig) => {
+    if (executionStateRef.current.isRunning || isInteractingWithApi) return;
+    console.log(`FRONTEND_EXEC: Starting execution for Scenario: ${scenario.name}, Server: ${server.name}`);
+    
+    setIsInteractingWithApi(true);
+    setLogs([{ id: `start-${Date.now()}`, timestamp: new Date().toISOString(), level: 'INFO', message: `Initializing scenario: "${scenario.name}" on server "${server.name}"...` }]);
+    setCurrentScenario(scenario);
+    setCurrentServerConfig(server);
+    setCurrentPacketForRun(null); // Clear if "Run Packet" was active
 
     try {
       const response = await fetch('/api/executions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenarioName, serverId, serverName }),
+        body: JSON.stringify({ scenarioId: scenario.id, scenarioName: scenario.name, serverId: server.id, serverName: server.name }),
       });
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Failed to create test execution record."}));
-        console.error("FRONTEND_EXEC: API error creating execution record:", errorData);
-        throw new Error(errorData.message || "Failed to create test execution record.");
+        const errorData = await response.json().catch(() => ({ message: "Failed to create test execution record." }));
+        throw new Error(errorData.message);
       }
       const executionData = await response.json();
-      console.log("FRONTEND_EXEC: Execution record created:", executionData);
       setCurrentTestExecutionId(executionData.id);
-      setCurrentRunningScenarioName(scenarioName);
-      setCurrentRunningServerId(serverId);
-      setCurrentRunningServerName(serverName);
       setIsRunning(true);
-      toast({ title: "Execution Started", description: `Scenario ${scenarioName} initiated. ID: ${executionData.id}.` });
+      toast({ title: "Execution Started", description: `Scenario "${scenario.name}" initiated. ID: ${executionData.id}.` });
     } catch (error) {
       console.error("FRONTEND_EXEC: Error starting execution:", error);
       toast({ title: "Start Failed", description: (error as Error).message, variant: "destructive" });
-      setLogs([initialLogEntry]);
+      setLogs([initialLogEntry]); // Reset logs
     } finally {
       setIsInteractingWithApi(false);
     }
-  };
+  }, [isInteractingWithApi, toast]);
 
 
   useEffect(() => {
-    const scenarioIdFromQuery = searchParams.get('scenarioId');
-    const scenarioNameFromQuery = searchParams.get('scenarioName'); // Passed by Scenario Builder "Run" button
-    const smokeTestScenario = searchParams.get('scenario'); // For dashboard smoke test
-    const smokeTestServerId = searchParams.get('serverId');
-    const smokeTestServerName = searchParams.get('serverName');
+    const fetchInitialData = async () => {
+      setIsLoadingScenarios(true);
+      setIsLoadingServers(true);
+      let fetchedScenarios: Scenario[] = [];
+      let fetchedServers: FullServerConfig[] = [];
 
-    if (scenarioIdFromQuery && scenarioNameFromQuery && !isRunning && !currentTestExecutionId && availableScenarios.length > 0) {
-      const scenarioExists = availableScenarios.find(s => s.id === scenarioIdFromQuery);
-      if (scenarioExists) {
-        setSelectedScenarioIdForDropdown(scenarioIdFromQuery);
-        // currentRunningScenarioName will be set when user clicks "Start Selected Scenario" or if auto-started
-      } else {
-        console.warn(`Scenario with ID ${scenarioIdFromQuery} not found in available scenarios.`);
-      }
-    } else if (smokeTestScenario && smokeTestServerId && smokeTestServerName && !isRunning && !currentTestExecutionId) {
-      handleStartExecution(smokeTestScenario, smokeTestServerId, smokeTestServerName);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, isRunning, currentTestExecutionId, availableScenarios, availableServers]);
+      try {
+        const scenariosRes = await fetch('/api/scenarios');
+        if (scenariosRes.ok) fetchedScenarios = await scenariosRes.json();
+        else console.error("Failed to fetch scenarios for execution console");
+      } catch (e) { console.error("Error fetching scenarios", e); }
+      setAvailableScenarios(fetchedScenarios);
+      setIsLoadingScenarios(false);
 
+      try {
+        const serversRes = await fetch('/api/settings/servers');
+        if (serversRes.ok) fetchedServers = await serversRes.json();
+        else console.error("Failed to fetch servers for execution console");
+      } catch (e) { console.error("Error fetching servers", e); }
+      setAvailableServers(fetchedServers);
+      setIsLoadingServers(false);
 
-  useEffect(() => {
-    let simulationActive = true;
-    let simulatedLogBatch: Omit<LogEntry, 'id' | 'testExecutionId'>[] = [];
+      // Auto-start logic (after scenarios and servers are loaded)
+      const scenarioIdFromQuery = searchParams.get('scenarioId');
+      const scenarioNameToRun = searchParams.get('scenarioName'); // For regular scenario run
+      const packetIdToRun = searchParams.get('packetId');         // For "Run Packet"
+      const packetNameToRun = searchParams.get('packetName');     // For "Run Packet"
+      const smokeTestScenario = searchParams.get('scenario');     // For dashboard smoke test
+      const smokeTestServerId = searchParams.get('serverId');
+      const smokeTestServerName = searchParams.get('serverName');
 
-    const addLogEntryToBatch = (logData: Omit<LogEntry, 'id' | 'testExecutionId' | 'timestamp'> & { timestamp?: string }) => {
-        if (!simulationActive) return;
-        const newLogEntry = {
-            timestamp: logData.timestamp || new Date().toISOString(),
-            level: logData.level,
-            message: logData.message,
-            rawDetails: logData.rawDetails,
-        };
-        simulatedLogBatch.push(newLogEntry);
-        setLogs(prevLogs => [...prevLogs, { ...newLogEntry, id: `sim_log_${Date.now()}_${Math.random().toString(36).substring(2,9)}` }]);
-    };
+      if (executionStateRef.current.isRunning || currentTestExecutionId) return;
 
-
-    if (isRunning && currentRunningScenarioName && currentRunningServerId && currentTestExecutionId) {
-      const serverConfig = mockServerConfigs[currentRunningServerId]; 
-
-      let preambleSuccessful = true;
-      let haltExecution = false;
-      let overallSimulationStatus: 'Completed' | 'Failed' | 'Aborted' = 'Completed';
-
-      const executeSimulatedSteps = async () => {
-        if (serverConfig?.scenarioExecutionSshCommands && serverConfig.scenarioExecutionSshCommands.length > 0) {
-          addLogEntryToBatch({
-            level: 'INFO',
-            message: `[SSH Preamble for ${serverConfig.name}] Starting SSH preamble execution...`,
-          });
-
-          for (const step of serverConfig.scenarioExecutionSshCommands) {
-            if (!simulationActive || haltExecution) break;
-            if (step.isEnabled) {
-              addLogEntryToBatch({ level: 'SSH_CMD', message: `Executing on ${serverConfig.name}: ${step.command}`, rawDetails: `${currentRunningServerName || 'server'}:~$ ${step.command}` });
-              await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
-              if (!simulationActive) break;
-              let mockOutput = `SIMULATED_SSH_OUTPUT for: ${step.command}\n...`;
-              if (step.command.includes("jump.example.com")) mockOutput = `SIMULATED_SSH_OUTPUT: Connected to jump.example.com. Authentication successful.`;
-              else if (step.command.includes("admin@10.0.1.100")) mockOutput = `SIMULATED_SSH_OUTPUT: Logged in as admin on 10.0.1.100. Authentication successful.`;
-              else if (step.command.includes("source /opt/radius/env.sh")) mockOutput = `SIMULATED_SSH_OUTPUT: Environment sourced. RADIUS_HOME=/opt/radius.`;
-              else if (step.command.includes("check_critical_service.sh")) {
-                if (Math.random() > 0.2) mockOutput = `SIMULATED_SSH_OUTPUT: SERVICE_OK: Critical service is running.`;
-                else mockOutput = `SIMULATED_SSH_OUTPUT: SERVICE_FAIL: Critical service is down.`;
-              }
-              addLogEntryToBatch({ level: 'SSH_OUT', message: `Output from ${serverConfig.name}:`, rawDetails: mockOutput });
-              if (step.expectedOutputContains) {
-                if (mockOutput.includes(step.expectedOutputContains)) {
-                  addLogEntryToBatch({ level: 'INFO', message: `[SSH Preamble] Success: '${step.name}' met expected output.` });
-                } else {
-                  addLogEntryToBatch({ level: 'SSH_FAIL', message: `[SSH Preamble] FAILED: '${step.name}'. Expected output "${step.expectedOutputContains}" not found. Halting scenario.` });
-                  preambleSuccessful = false; haltExecution = true; overallSimulationStatus = 'Failed';
-                }
-              } else {
-                 let simulatedSuccess = true;
-                 if (step.command.includes("check_critical_service.sh") && mockOutput.includes("SERVICE_FAIL")) simulatedSuccess = false;
-                 if (!simulatedSuccess) {
-                    addLogEntryToBatch({ level: 'SSH_FAIL', message: `[SSH Preamble] FAILED: '${step.name}' due to simulated error.` });
-                    preambleSuccessful = false; haltExecution = true; overallSimulationStatus = 'Failed';
-                 }
-              }
-            } else { addLogEntryToBatch({ level: 'INFO', message: `[SSH Preamble] Skipped (disabled): ${step.name}` }); }
-          }
-        }
-
-        if (preambleSuccessful && !haltExecution) {
-          const useRadclient = Math.random() > 0.5;
-          const toolName = useRadclient ? "radclient" : "radtest";
-          let mockToolOptionsLog = `Simulating packet send using ${toolName}.`;
-          if (useRadclient) mockToolOptionsLog += ` Target: ${serverConfig?.name || currentRunningServerName}, Type: auth (simulated).`;
-          else mockToolOptionsLog += ` User: testuser@${serverConfig?.name || currentRunningServerName} (simulated).`;
-          if (Math.random() > 0.7) mockToolOptionsLog += " Debug (-x) enabled (simulated).";
-          addLogEntryToBatch({ level: 'INFO', message: mockToolOptionsLog });
-
-          const mockLevels: LogLevel[] = ['SENT', 'RECV', 'DEBUG', 'INFO'];
-          const mockMessages = [ "User-Name = \"testuser\"", "NAS-IP-Address = 10.0.0.1", "Framed-IP-Address = 192.168.1.100", "Session-Timeout = 3600", "SQL Validation (mock): User 'testuser' found in database.", "Delaying for 500ms..." ];
-          for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) {
-            if (!simulationActive || haltExecution) break;
-            await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 150));
-            if (!simulationActive) break;
-            const randomLevel = mockLevels[Math.floor(Math.random() * mockLevels.length)];
-            const randomMessage = mockMessages[Math.floor(Math.random() * mockMessages.length)];
-            let entry: Omit<LogEntry, 'id' | 'testExecutionId' | 'timestamp'> = { timestamp: new Date().toISOString(), level: randomLevel, message: `${currentRunningScenarioName}: ${randomMessage}`};
-            if (randomLevel === 'SENT' || randomLevel === 'RECV') entry.rawDetails = `SIMULATED_PACKET_DATA: Code: ${randomLevel === 'SENT' ? 'Access-Request' : 'Access-Accept'}\n  Attr: User-Name = "sim_user_${Math.random().toString(36).substring(7)}"\n  ... (more attributes) ...`;
-            addLogEntryToBatch(entry);
-          }
-          if (Math.random() < 0.1 && simulationActive && !haltExecution) {
-              addLogEntryToBatch({ level: 'ERROR', message: `${currentRunningScenarioName}: Simulated packet validation failed for attribute 'Vendor-Specific'` });
-              overallSimulationStatus = 'Failed';
-          }
-        } else if (!preambleSuccessful) {
-          addLogEntryToBatch({ level: 'ERROR', message: `RADIUS scenario '${currentRunningScenarioName}' execution halted due to SSH preamble failure.` });
-          overallSimulationStatus = 'Failed';
-        }
-        
-        if (!simulationActive) return;
-
-        const finalLogMessage = `Scenario ${currentRunningScenarioName} simulation finished with status: ${overallSimulationStatus}.`;
-        addLogEntryToBatch({ level: overallSimulationStatus === 'Completed' ? 'INFO' : 'ERROR', message: finalLogMessage });
-        
+      if (packetIdToRun && packetNameToRun) {
+        // "Run Packet" flow - Packet will be fetched when server is selected
+        toast({ title: "Run Packet Mode", description: `Packet "${packetNameToRun}" ready. Select a server to run it.`});
+        setLogs([initialLogEntry, { id: `packet-mode-${Date.now()}`, timestamp: new Date().toISOString(), level: 'INFO', message: `Run Packet Mode: "${packetNameToRun}" loaded. Please select a target server.` }]);
+        // Fetch the packet details now, so it's ready when server is picked
         setIsInteractingWithApi(true);
         try {
-          if (simulatedLogBatch.length > 0 && currentTestExecutionId) {
-            const logSaveResponse = await fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ testExecutionId: currentTestExecutionId, logs: simulatedLogBatch }) });
-            if (!logSaveResponse.ok) console.error("FRONTEND_EXEC: Failed to save logs:", await logSaveResponse.text()); else console.log("FRONTEND_EXEC: Logs saved successfully.");
-          }
-          let resultIdForExecution: string | undefined = undefined;
-          if (currentTestExecutionId && currentRunningScenarioName && currentRunningServerName) {
-            const resultStatusMap: Record<typeof overallSimulationStatus, TestResult['status']> = { 'Completed': 'Pass', 'Failed': 'Fail', 'Aborted': 'Warning' };
-            const resultToPost: Omit<TestResult, 'id' | 'timestamp'> & { timestamp: string } = { scenarioName: currentRunningScenarioName, status: resultStatusMap[overallSimulationStatus], timestamp: new Date().toISOString(), latencyMs: Math.floor(Math.random() * (450 - 50 + 1)) + 50, server: currentRunningServerName, details: { executionId: currentTestExecutionId, simulatedLogCount: simulatedLogBatch.length } };
-            const postResultResponse = await fetch('/api/results', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(resultToPost) });
-            if (postResultResponse.ok) { const newTestResult = await postResultResponse.json(); resultIdForExecution = newTestResult.id; console.log("FRONTEND_EXEC: Test result summary saved:", newTestResult); }
-            else console.error("FRONTEND_EXEC: Failed to save test result summary:", await postResultResponse.text());
-          }
-          if (currentTestExecutionId) {
-            const executionUpdatePayload: { endTime: string; status: string; resultId?: string } = { endTime: new Date().toISOString(), status: overallSimulationStatus };
-            if (resultIdForExecution) executionUpdatePayload.resultId = resultIdForExecution;
-            const execUpdateResponse = await fetch(`/api/executions/${currentTestExecutionId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(executionUpdatePayload) });
-            if (!execUpdateResponse.ok) console.error("FRONTEND_EXEC: Failed to update execution record:", await execUpdateResponse.text()); else console.log("FRONTEND_EXEC: Execution record updated:", await execUpdateResponse.json());
-          }
-          if (simulationActive) toast({ title: "Execution Complete", description: `Scenario ${currentRunningScenarioName} processing finished. Status: ${overallSimulationStatus}. Logs saved.` });
-        } catch (error) {
-          if (simulationActive) { console.error("FRONTEND_EXEC: Error saving execution details, logs, or results:", error); toast({ title: "API Error", description: "Could not save all execution data to backend.", variant: "destructive" }); }
+            const packetRes = await fetch(`/api/packets/${packetIdToRun}`);
+            if (packetRes.ok) {
+                const packetData = await packetRes.json();
+                setCurrentPacketForRun(packetData);
+                 // User still needs to select a server via UI
+            } else {
+                toast({ title: "Error", description: `Could not load packet details for "${packetNameToRun}".`, variant: "destructive" });
+            }
+        } catch (e) {
+            toast({ title: "Error", description: `Failed to fetch packet "${packetNameToRun}".`, variant: "destructive" });
         } finally {
-          if (simulationActive) { setIsRunning(false); setIsInteractingWithApi(false); }
+            setIsInteractingWithApi(false);
         }
-      };
-      executeSimulatedSteps();
-    }
-    return () => { console.log("FRONTEND_EXEC: Simulation cleanup called."); simulationActive = false; };
+
+      } else if (scenarioIdFromQuery && scenarioNameToRun) {
+        const scenario = fetchedScenarios.find(s => s.id === scenarioIdFromQuery);
+        if (scenario) {
+          setSelectedScenarioIdForDropdown(scenarioIdFromQuery);
+          toast({ title: "Scenario Loaded", description: `Scenario "${scenario.name}" ready. Select a server to run it.`});
+        } else {
+          toast({ title: "Error", description: `Scenario "${scenarioNameToRun}" (ID: ${scenarioIdFromQuery}) not found.`, variant: "destructive" });
+        }
+      } else if (smokeTestScenario && smokeTestServerId && smokeTestServerName) {
+        const server = fetchedServers.find(s => s.id === smokeTestServerId);
+        if (server) {
+          // Construct a temporary smoke test scenario
+          const tempSmokeScenario: Scenario = {
+            id: 'smoke-test-scenario', name: smokeTestScenario, description: 'Automated smoke test',
+            variables: [],
+            steps: [{ id: 'smoke-step-1', type: 'log_message', name: 'Smoke Test Start', details: { message: `Starting smoke test for ${server.name}` } }],
+            lastModified: new Date().toISOString(), tags: ['smoke-test']
+          };
+          startScenarioExecution(tempSmokeScenario, server);
+        } else {
+          toast({ title: "Error", description: `Server for smoke test (ID: ${smokeTestServerId}) not found.`, variant: "destructive" });
+        }
+      }
+    };
+    fetchInitialData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning, currentRunningScenarioName, currentRunningServerId, currentTestExecutionId]);
+  }, []); // Run once on mount, searchParams are stable unless explicitly changed by router
 
 
+  // Main Execution Loop Effect
+  useEffect(() => {
+    let simulationActive = true;
+    const logBatchForSave: Omit<LogEntry, 'id' | 'testExecutionId'>[] = [];
+
+    const execute = async () => {
+      if (!isRunning || !currentScenario || !currentServerConfig || !executionStateRef.current.currentTestExecutionId) {
+        return;
+      }
+
+      let overallSimulationStatus: 'Completed' | 'Failed' | 'Aborted' = 'Completed';
+      const scenarioVariables = currentScenario.variables || [];
+      const serverSshUser = currentServerConfig.sshUser || 'user';
+      const serverSshHost = currentServerConfig.host || 'server_host';
+      const currentUserAtHost = `${serverSshUser}@${serverSshHost}`;
+
+      // 1. Execute Server SSH Preamble (ScenarioExecutionSshCommands)
+      if (currentServerConfig.scenarioExecutionSshCommands && currentServerConfig.scenarioExecutionSshCommands.length > 0) {
+        addLogEntryToBatchAndState({ level: 'INFO', message: `[SCENARIO PREAMBLE for ${currentServerConfig.name}] Starting SSH preamble execution...` }, { current: logBatchForSave });
+        for (const sshStep of currentServerConfig.scenarioExecutionSshCommands) {
+          if (!simulationActive) { overallSimulationStatus = 'Aborted'; break; }
+          if (sshStep.isEnabled) {
+            const commandToRun = resolveVariable(sshStep.command, scenarioVariables);
+            addLogEntryToBatchAndState({ level: 'SSH_CMD', message: `Executing on ${currentServerConfig.name}: ${commandToRun}`, rawDetails: `${currentUserAtHost}:~$ ${commandToRun}` }, { current: logBatchForSave });
+            
+            // SIMULATED: SSH Service Call
+            const sshResult = await sshService.executeCommand(commandToRun);
+            if (!simulationActive) { overallSimulationStatus = 'Aborted'; break; }
+
+            let stepSuccess = sshResult.code === 0;
+            let outputMessage = `SSH Preamble Step: "${sshStep.name}" executed.`;
+            if (sshResult.stdout) addLogEntryToBatchAndState({level: 'SSH_OUT', message: `Output from "${sshStep.name}":`, rawDetails: sshResult.stdout}, {current: logBatchForSave});
+            if (sshResult.stderr) addLogEntryToBatchAndState({level: 'SSH_FAIL', message: `Error output from "${sshStep.name}":`, rawDetails: sshResult.stderr}, {current: logBatchForSave});
+
+
+            if (sshStep.expectedOutputContains) {
+              const resolvedExpectedOutput = resolveVariable(sshStep.expectedOutputContains, scenarioVariables);
+              if (sshResult.stdout.includes(resolvedExpectedOutput) || sshResult.stderr.includes(resolvedExpectedOutput)) {
+                outputMessage += ` Expected output "${resolvedExpectedOutput}" found.`;
+              } else {
+                stepSuccess = false;
+                outputMessage += ` FAILED. Expected output "${resolvedExpectedOutput}" NOT found.`;
+              }
+            }
+             if (!stepSuccess) {
+                overallSimulationStatus = 'Failed';
+                addLogEntryToBatchAndState({ level: 'ERROR', message: `[SCENARIO PREAMBLE] ${outputMessage} Halting scenario.` }, { current: logBatchForSave });
+                break; // Halt scenario on preamble failure
+            } else {
+                 addLogEntryToBatchAndState({ level: 'INFO', message: `[SCENARIO PREAMBLE] ${outputMessage}` }, { current: logBatchForSave });
+            }
+          } else {
+            addLogEntryToBatchAndState({ level: 'INFO', message: `[SCENARIO PREAMBLE] Skipped (disabled): ${sshStep.name}` }, { current: logBatchForSave });
+          }
+        }
+      }
+      if (overallSimulationStatus === 'Failed' || overallSimulationStatus === 'Aborted') {
+         // Save logs and mark execution as failed/aborted
+        await saveLogsAndExecutionRecord(logBatchForSave, executionStateRef.current.currentTestExecutionId, overallSimulationStatus, currentScenario.name, currentServerConfig.name);
+        if (simulationActive) setIsRunning(false);
+        return;
+      }
+
+      // 2. Execute Scenario Steps
+      for (const step of currentScenario.steps) {
+        if (!simulationActive) { overallSimulationStatus = 'Aborted'; break; }
+        if (!step.details) step.details = {}; // Ensure details object exists
+
+        addLogEntryToBatchAndState({ level: 'INFO', message: `[STEP START] Executing: "${step.name}" (Type: ${step.type.toUpperCase()})` }, { current: logBatchForSave });
+
+        try {
+          switch (step.type) {
+            case 'radius': {
+              let packetToUse: RadiusPacket | undefined = undefined;
+              if (step.details.packet_id) {
+                 const packetRes = await fetch(`/api/packets/${step.details.packet_id}`);
+                 if (packetRes.ok) packetToUse = await packetRes.json();
+                 else throw new Error(`Failed to fetch packet ID ${step.details.packet_id}`);
+              } else { // Construct ad-hoc packet from step details if no packet_id
+                  packetToUse = {
+                      id: 'adhoc-packet', name: 'AdHoc Packet from Scenario Step', description: '',
+                      attributes: (step.details.expectedAttributes || []).map((attr: ExpectedReplyAttribute) => ({id: attr.id, name: attr.name, value: attr.value})), // Using expected as sent for adhoc
+                      lastModified: new Date().toISOString(), tags: [],
+                      executionTool: 'radclient', // Default or make configurable in step
+                      toolOptions: {}
+                  };
+              }
+              if (!packetToUse) throw new Error("Packet details not found or defined for RADIUS step.");
+
+              const tool = packetToUse.executionTool || 'radclient';
+              const toolOpts = packetToUse.toolOptions || {};
+              
+              // Construct a display command string
+              let displayCommand = `${tool} `;
+              if (tool === 'radclient') {
+                displayCommand += `${resolveVariable(currentServerConfig.host, scenarioVariables)}:${currentServerConfig.radiusAuthPort} `;
+                displayCommand += `${(toolOpts as any).type || 'auth'} ${currentServerConfig.defaultSecret || 'SECRET_NOT_SET'}`;
+                // Add attributes to displayCommand
+                 packetToUse.attributes.forEach(attr => {
+                     displayCommand += ` ${resolveVariable(attr.name, scenarioVariables)}="${resolveVariable(attr.value, scenarioVariables)}"`;
+                 });
+              } else { // radtest
+                 displayCommand += `${resolveVariable((toolOpts as any).user || 'testuser', scenarioVariables)} ${resolveVariable((toolOpts as any).password || 'testpass', scenarioVariables)} `;
+                 displayCommand += `${resolveVariable(currentServerConfig.host, scenarioVariables)}:${currentServerConfig.radiusAuthPort} ${currentServerConfig.defaultSecret || 'SECRET_NOT_SET'}`;
+              }
+              addLogEntryToBatchAndState({ level: 'INFO', message: `Preparing to send RADIUS request (Tool: ${tool}):`, rawDetails: displayCommand }, { current: logBatchForSave });
+
+              // SIMULATED: RADIUS Service Call
+              const radiusResult = await radiusService.simulateExecuteTool(packetToUse, currentServerConfig, scenarioVariables);
+              if (!simulationActive) { overallSimulationStatus = 'Aborted'; break; }
+
+              if(radiusResult.simulatedSentPacket) addLogEntryToBatchAndState({level: 'SENT', message: "Simulated Packet Sent:", rawDetails: radiusResult.simulatedSentPacket}, {current: logBatchForSave});
+              if(radiusResult.simulatedFullOutput) addLogEntryToBatchAndState({level: 'DEBUG', message: `Simulated ${tool} Output:`, rawDetails: radiusResult.simulatedFullOutput}, {current: logBatchForSave});
+              if(radiusResult.simulatedReceivedPacket) addLogEntryToBatchAndState({level: 'RECV', message: "Simulated Packet Received:", rawDetails: radiusResult.simulatedReceivedPacket}, {current: logBatchForSave});
+              
+              if (radiusResult.code !== 0 || radiusResult.error) { // code !== 0 implies tool error, .error implies internal simulation error
+                throw new Error(radiusResult.error || `Simulated ${tool} command failed with code ${radiusResult.code}.`);
+              }
+              // TODO: Implement validation of received attributes against step.details.expectedAttributes
+              break;
+            }
+            case 'sql': {
+              const query = resolveVariable(step.details.query || '', scenarioVariables);
+              addLogEntryToBatchAndState({ level: 'INFO', message: `Executing SQL Query:`, rawDetails: query }, { current: logBatchForSave });
+              // SIMULATED: DB Service Call
+              const dbResult = await dbService.executeQuery(query);
+              if (!simulationActive) { overallSimulationStatus = 'Aborted'; break; }
+              if (dbResult.error) throw dbResult.error;
+              addLogEntryToBatchAndState({ level: 'DEBUG', message: `SQL Query Result:`, rawDetails: JSON.stringify(dbResult.rows, null, 2) }, { current: logBatchForSave });
+              // TODO: Implement validation against step.details.expect_column/expect_value
+              break;
+            }
+            case 'api_call': {
+              const url = resolveVariable(step.details.url || '', scenarioVariables);
+              const method = step.details.method || 'GET';
+              const headers = (step.details.headers || []).reduce((acc: Record<string,string>, h: ApiHeader) => {
+                  acc[resolveVariable(h.name, scenarioVariables)] = resolveVariable(h.value, scenarioVariables); return acc;
+              }, {});
+              const body = step.details.requestBody ? JSON.parse(resolveVariable(step.details.requestBody, scenarioVariables)) : undefined;
+              addLogEntryToBatchAndState({level: 'INFO', message: `Making API Call: ${method} ${url}`, rawDetails: `Headers: ${JSON.stringify(headers, null, 2)}\nBody: ${JSON.stringify(body, null, 2)}` }, { current: logBatchForSave});
+              // SIMULATED: API Service Call
+              const apiResult = await apiService.makeRequest({url, method, headers, body});
+              if (!simulationActive) { overallSimulationStatus = 'Aborted'; break; }
+              if (apiResult.error) throw apiResult.error;
+              addLogEntryToBatchAndState({level: 'DEBUG', message: `API Response (Status: ${apiResult.status}):`, rawDetails: JSON.stringify(apiResult.data, null, 2)}, {current: logBatchForSave});
+              // TODO: Implement validation against expected status/response
+              break;
+            }
+            case 'delay':
+              const duration = parseInt(resolveVariable(String(step.details.duration_ms || 1000), scenarioVariables), 10);
+              addLogEntryToBatchAndState({ level: 'INFO', message: `Delaying for ${duration}ms...` }, { current: logBatchForSave });
+              await new Promise(resolve => setTimeout(resolve, duration));
+              break;
+            case 'log_message':
+              addLogEntryToBatchAndState({ level: 'INFO', message: `LOG: ${resolveVariable(step.details.message || '', scenarioVariables)}` }, { current: logBatchForSave });
+              break;
+            case 'conditional_start':
+            case 'loop_start':
+                addLogEntryToBatchAndState({ level: 'INFO', message: `Placeholder for ${step.type}: Condition "${step.details.condition || 'N/A'}" (Iterations: ${step.details.iterations || 'N/A'}) - Not fully implemented in client sim.` }, { current: logBatchForSave });
+                break;
+            case 'conditional_end':
+            case 'loop_end':
+                addLogEntryToBatchAndState({ level: 'INFO', message: `Placeholder for ${step.type}: End of block.` }, { current: logBatchForSave });
+                break;
+            default:
+              addLogEntryToBatchAndState({ level: 'WARN', message: `Step type "${step.type}" not fully implemented in client simulation.` }, { current: logBatchForSave });
+          }
+           addLogEntryToBatchAndState({ level: 'INFO', message: `[STEP END] Finished: "${step.name}" successfully.` }, { current: logBatchForSave });
+        } catch (stepError: any) {
+          overallSimulationStatus = 'Failed';
+          addLogEntryToBatchAndState({ level: 'ERROR', message: `[STEP FAIL] Error in step "${step.name}": ${stepError.message}`, rawDetails: stepError.stack }, { current: logBatchForSave });
+          break; // Halt scenario on step failure
+        }
+      }
+
+      if (simulationActive) {
+        const finalLogMessage = `Scenario "${currentScenario.name}" simulation finished with status: ${overallSimulationStatus}.`;
+        addLogEntryToBatchAndState({ level: overallSimulationStatus === 'Completed' ? 'INFO' : 'ERROR', message: finalLogMessage }, { current: logBatchForSave });
+      }
+      
+      // Save all accumulated logs and final execution status
+      await saveLogsAndExecutionRecord(logBatchForSave, executionStateRef.current.currentTestExecutionId, overallSimulationStatus, currentScenario.name, currentServerConfig.name);
+      if (simulationActive) setIsRunning(false); // Ensure this is set only if not aborted from elsewhere
+    };
+
+    if (isRunning && currentScenario && currentServerConfig && executionStateRef.current.currentTestExecutionId) {
+      execute();
+    }
+
+    return () => { // Cleanup function for useEffect
+      simulationActive = false;
+      console.log("FRONTEND_EXEC: Simulation cleanup triggered for main execution effect.");
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning, currentScenario, currentServerConfig, addLogEntryToBatchAndState, saveLogsAndExecutionRecord, resolveVariable]); // Dependencies for the main execution loop
+
+  // Auto-scroll effect
   useEffect(() => {
     if (scrollAreaRef.current) {
-      const scrollElement = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
+      const scrollViewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
+      if (scrollViewport) {
+        const isNearBottom = scrollViewport.scrollHeight - scrollViewport.scrollTop - scrollViewport.clientHeight < 150;
+        if (isNearBottom || logs.length < 20) { // Scroll if near bottom or few logs
+          requestAnimationFrame(() => {
+            scrollViewport.scrollTop = scrollViewport.scrollHeight;
+          });
+        }
       }
     }
   }, [logs]);
 
 
   const stopExecution = async () => {
-    const stoppedScenario = currentRunningScenarioName; 
-    setIsRunning(false); 
-    const stopMessage = `Execution of ${stoppedScenario || 'scenario'} stopped by user.`;
+    if (!executionStateRef.current.isRunning && !executionStateRef.current.currentTestExecutionId) {
+      toast({title: "Not Running", description: "No execution is currently active to stop.", variant:"default"});
+      return;
+    }
+    const wasRunning = executionStateRef.current.isRunning;
+    setIsRunning(false); // This will trigger cleanup in the main useEffect via simulationActive = false
+
+    const scenarioNameForLog = currentScenario?.name || currentPacketForRun?.name || 'Unnamed Execution';
+    const stopMessage = `Execution of "${scenarioNameForLog}" aborted by user.`;
     const localStopLog: LogEntry = { id: `stop-${Date.now()}`, timestamp: new Date().toISOString(), level: 'WARN', message: stopMessage };
     setLogs(prev => [...prev, localStopLog]);
-
-    if (currentTestExecutionId) {
-      setIsInteractingWithApi(true);
-      try {
-         await fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ testExecutionId: currentTestExecutionId, logs: [{ timestamp: new Date().toISOString(), level: 'WARN' as LogLevel, message: stopMessage }] }) });
-         console.log("FRONTEND_EXEC: 'Stopped by user' log sent to backend.");
-         await fetch(`/api/executions/${currentTestExecutionId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endTime: new Date().toISOString(), status: 'Aborted' }) });
-         toast({ title: "Execution Aborted", description: `Scenario ${stoppedScenario || ''} marked as Aborted.` });
-         console.log("FRONTEND_EXEC: Execution record marked as Aborted for ID:", currentTestExecutionId);
-      } catch (error) {
-        console.error("FRONTEND_EXEC: Error updating execution status to Aborted:", error);
-        toast({ title: "API Error", description: "Could not update execution status to Aborted.", variant: "destructive" });
-      } finally {
-        setIsInteractingWithApi(false);
-      }
+    
+    if (executionStateRef.current.currentTestExecutionId) {
+        if (wasRunning) { // Only save if it was truly running and now aborted
+            await saveLogsAndExecutionRecord([localStopLog], executionStateRef.current.currentTestExecutionId, 'Aborted', scenarioNameForLog, currentServerConfig?.name);
+        }
     } else {
-        setCurrentRunningScenarioName(null);
-        setCurrentRunningServerId(null);
-        setCurrentRunningServerName(null);
+        // If somehow no execution ID but tried to stop, reset UI elements
+        setCurrentScenario(null);
+        setCurrentServerConfig(null);
+        setCurrentPacketForRun(null);
     }
+    toast({ title: "Execution Aborted", description: `Scenario "${scenarioNameForLog}" processing stopped by user.` });
   };
 
+
   const handleExportLogs = () => {
-    if (logs.length <= 1 && logs[0].id === 'init_log') {
+    if (logs.length === 0 || (logs.length === 1 && logs[0].id.startsWith('init_log'))) {
         toast({ title: "No Logs", description: "No logs to export." });
         return;
     }
@@ -344,8 +546,8 @@ export default function ExecutionConsolePage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const scenarioNameForFile = currentRunningScenarioName ? currentRunningScenarioName.replace(/\s+/g, '_') : 'execution';
-    const serverNameForFile = currentRunningServerName ? currentRunningServerName.replace(/\s+/g, '_') : 'server';
+    const scenarioNameForFile = (currentScenario?.name || currentPacketForRun?.name || 'execution').replace(/\s+/g, '_');
+    const serverNameForFile = (currentServerConfig?.name || 'server').replace(/\s+/g, '_');
     const timestampForFile = new Date().toISOString().replace(/:/g, '-').slice(0, 19);
     link.download = `radiusedge_logs_${scenarioNameForFile}_${serverNameForFile}_${timestampForFile}.log`;
     document.body.appendChild(link);
@@ -355,7 +557,7 @@ export default function ExecutionConsolePage() {
     toast({ title: "Logs Exported", description: "Log file download initiated." });
   };
 
-  const getLogLevelClass = (level: LogLevel) => {
+  const getLogLevelClass = (level: LogLevel): string => {
     switch (level) {
       case 'ERROR': return 'text-red-500 dark:text-red-400';
       case 'WARN': return 'text-yellow-500 dark:text-yellow-400';
@@ -370,65 +572,92 @@ export default function ExecutionConsolePage() {
     }
   };
 
-  const handleStartSelectedScenario = () => {
-    if (!selectedScenarioIdForDropdown || !selectedServerIdForDropdown) {
-      toast({ title: "Selection Required", description: "Please select both a scenario and a server.", variant: "default" });
-      return;
-    }
-    const scenarioToRun = availableScenarios.find(s => s.id === selectedScenarioIdForDropdown);
-    const serverToRunOn = availableServers.find(s => s.id === selectedServerIdForDropdown);
+  const handleStartSelected = () => {
+    if (currentPacketForRun && selectedServerIdForDropdown) { // "Run Packet" mode
+        const serverToRunOn = availableServers.find(s => s.id === selectedServerIdForDropdown);
+        if (serverToRunOn) {
+            // Construct a temporary scenario for the single packet
+            const tempPacketScenario: Scenario = {
+                id: `packet-run-${currentPacketForRun.id}`,
+                name: `Run Packet: ${currentPacketForRun.name}`,
+                description: `Single execution of packet: ${currentPacketForRun.name}`,
+                variables: [],
+                steps: [{
+                    id: `packet-step-${currentPacketForRun.id}`,
+                    type: 'radius',
+                    name: `Send Packet: ${currentPacketForRun.name}`,
+                    details: { packet_id: currentPacketForRun.id } // Engine will fetch packet details
+                }],
+                lastModified: new Date().toISOString(), tags: ['single-packet-run']
+            };
+            startScenarioExecution(tempPacketScenario, serverToRunOn);
+        } else {
+            toast({ title: "Error", description: "Selected server details not found.", variant: "destructive" });
+        }
+    } else if (selectedScenarioIdForDropdown && selectedServerIdForDropdown) { // Regular scenario run
+        const scenarioToRun = availableScenarios.find(s => s.id === selectedScenarioIdForDropdown);
+        const serverToRunOn = availableServers.find(s => s.id === selectedServerIdForDropdown);
 
-    if (scenarioToRun && serverToRunOn) {
-      handleStartExecution(scenarioToRun.name, serverToRunOn.id, serverToRunOn.name);
+        if (scenarioToRun && serverToRunOn) {
+        startScenarioExecution(scenarioToRun, serverToRunOn);
+        } else {
+        toast({ title: "Error", description: "Selected scenario or server details not found.", variant: "destructive" });
+        }
     } else {
-      toast({ title: "Error", description: "Selected scenario or server details not found.", variant: "destructive" });
+         toast({ title: "Selection Required", description: "Please select a scenario/packet and a server.", variant: "default" });
     }
   };
+  
+  const isStartButtonDisabled = () => {
+    if (isRunning || isInteractingWithApi || isLoadingScenarios || isLoadingServers) return true;
+    if (currentPacketForRun) return !selectedServerIdForDropdown; // For packet run, only server needed
+    return !selectedScenarioIdForDropdown || !selectedServerIdForDropdown; // For scenario run, both needed
+  };
+
 
   return (
     <div className="h-full flex flex-col space-y-8">
       <PageHeader
         title="Execution Console"
-        description="View logs and control test executions."
+        description="View logs and control test executions. Commands and outputs are simulated based on your scenario/packet definitions."
       />
 
-      <Card className="shadow-lg flex-grow flex flex-col">
+      <Card className="shadow-lg flex-grow flex flex-col min-h-0"> {/* Ensure Card can shrink */}
         <CardHeader className="flex-shrink-0 border-b">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex-grow">
+            <div className="flex-grow min-w-0"> {/* Ensure this can shrink */}
               {isRunning || currentTestExecutionId ? (
                 <>
                   <CardTitle className="flex items-center gap-2">
                     <Terminal className="h-5 w-5 text-primary" />
                     Live Output
                   </CardTitle>
-                  <CardDescription className="mt-1 space-y-0.5 text-xs">
-                    {currentRunningScenarioName && <div className="flex items-center gap-1.5"><FileText className="h-3 w-3 text-muted-foreground" /> Scenario: <strong>{currentRunningScenarioName}</strong></div>}
-                    {currentRunningServerName && <div className="flex items-center gap-1.5"><Server className="h-3 w-3 text-muted-foreground" /> Server: <strong>{currentRunningServerName}</strong></div>}
-                    {currentTestExecutionId && <div className="flex items-center gap-1.5 text-muted-foreground">Execution ID: {currentTestExecutionId}</div>}
+                  <CardDescription className="mt-1 space-y-0.5 text-xs truncate">
+                    {currentScenario?.name && <div className="flex items-center gap-1.5"><FileText className="h-3 w-3 text-muted-foreground" /> Scenario: <strong className="truncate">{currentScenario.name}</strong></div>}
+                    {currentServerConfig?.name && <div className="flex items-center gap-1.5"><Server className="h-3 w-3 text-muted-foreground" /> Server: <strong className="truncate">{currentServerConfig.name}</strong></div>}
+                    {currentTestExecutionId && <div className="flex items-center gap-1.5 text-muted-foreground text-xs">Exec ID: {currentTestExecutionId}</div>}
                   </CardDescription>
                 </>
               ) : (
                 <>
-                  <CardTitle>Start a Test Scenario</CardTitle>
-                  <CardDescription>Select a scenario and server to begin execution.</CardDescription>
+                  <CardTitle>Start a Test</CardTitle>
+                  <CardDescription>
+                    {currentPacketForRun ? `Select a server to run packet: "${currentPacketForRun.name}".` : "Select a scenario and server to begin execution."}
+                  </CardDescription>
                 </>
               )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 self-start sm:self-center">
               {isRunning ? (
                 <Button variant="destructive" onClick={stopExecution} disabled={isInteractingWithApi}>
-                  {isInteractingWithApi ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <StopCircle className="mr-2 h-4 w-4" />}
+                  {isInteractingWithApi && !isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <StopCircle className="mr-2 h-4 w-4" />}
                   Abort Execution
                 </Button>
-              ) : (
-                 // Placeholder for spacing if needed, but generally hidden when selection UI is shown
-                 <div className="w-0 h-0"></div>
-              )}
-              <Button variant="outline" onClick={handleExportLogs} disabled={(logs.length <= 1 && logs[0]?.id === 'init_log') || isInteractingWithApi}>
+              ) : ( <div className="w-0 h-0"></div> )}
+              <Button variant="outline" onClick={handleExportLogs} disabled={(logs.length <= 1 && logs[0]?.id.startsWith('init_log')) || isInteractingWithApi}>
                 <DownloadCloud className="mr-2 h-4 w-4" /> Export Logs
               </Button>
-              <Button variant="outline" disabled> {/* Conceptual */}
+              <Button variant="outline" disabled>
                 <FileArchive className="mr-2 h-4 w-4" /> Save PCAP
               </Button>
             </div>
@@ -442,10 +671,10 @@ export default function ExecutionConsolePage() {
               <Select
                 value={selectedScenarioIdForDropdown || ""}
                 onValueChange={setSelectedScenarioIdForDropdown}
-                disabled={isLoadingScenarios || isRunning || isInteractingWithApi}
+                disabled={isLoadingScenarios || isRunning || isInteractingWithApi || !!currentPacketForRun}
               >
                 <SelectTrigger id="scenario-select-exec">
-                  <SelectValue placeholder="Choose a scenario..." />
+                  <SelectValue placeholder={currentPacketForRun ? `Packet: ${currentPacketForRun.name}` : "Choose a scenario..."} />
                 </SelectTrigger>
                 <SelectContent>
                   {isLoadingScenarios ? <SelectItem value="loading" disabled>Loading scenarios...</SelectItem> :
@@ -476,20 +705,20 @@ export default function ExecutionConsolePage() {
               </Select>
             </div>
             <Button
-              onClick={handleStartSelectedScenario}
-              disabled={!selectedScenarioIdForDropdown || !selectedServerIdForDropdown || isRunning || isInteractingWithApi || isLoadingScenarios || isLoadingServers}
+              onClick={handleStartSelected}
+              disabled={isStartButtonDisabled()}
             >
-              {(isRunning || isInteractingWithApi) && (selectedScenarioIdForDropdown && selectedServerIdForDropdown) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              Start Selected Scenario
+              {(isRunning || (isInteractingWithApi && !currentTestExecutionId)) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+              Start Execution
             </Button>
           </div>
         )}
 
-        <CardContent className="flex-grow overflow-hidden p-0">
-          <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
+        <CardContent className="flex-grow overflow-hidden p-0"> {/* Ensure CardContent can shrink and has overflow hidden */}
+          <ScrollArea className="h-full p-4" ref={scrollAreaRef}> {/* ScrollArea should take full height of its parent */}
             <div className="font-mono text-xs space-y-1">
-              {logs.map((log, index) => (
-                <div key={`${log.id}-${index}`} className="flex items-start">
+              {logs.map((log) => (
+                <div key={log.id} className="flex items-start">
                   <span className="w-28 text-muted-foreground flex-shrink-0 pt-0.5">{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })}</span>
                   <Badge
                     variant="outline"
@@ -499,6 +728,7 @@ export default function ExecutionConsolePage() {
                       log.level === 'INFO' && 'border-blue-500/50 text-blue-600 bg-blue-500/10 dark:border-blue-400/50 dark:text-blue-400 dark:bg-blue-400/10',
                       log.level === 'SENT' && 'border-purple-500/50 text-purple-600 bg-purple-500/10 dark:border-purple-400/50 dark:text-purple-400 dark:bg-purple-400/10',
                       log.level === 'RECV' && 'border-teal-500/50 text-teal-600 bg-teal-500/10 dark:border-teal-400/50 dark:text-teal-400 dark:bg-teal-400/10',
+                      log.level === 'DEBUG' && 'border-gray-500/50 text-gray-600 bg-gray-500/10 dark:border-gray-400/50 dark:text-gray-400 dark:bg-gray-400/10',
                       log.level === 'SSH_CMD' && 'border-cyan-500/50 text-cyan-700 bg-cyan-500/10 dark:border-cyan-400/50 dark:text-cyan-300 dark:bg-cyan-400/10',
                       log.level === 'SSH_OUT' && 'border-lime-500/50 text-lime-700 bg-lime-500/10 dark:border-lime-400/50 dark:text-lime-300 dark:bg-lime-400/10',
                       log.level === 'SSH_FAIL' && 'border-orange-500/50 text-orange-700 bg-orange-500/10 dark:border-orange-400/50 dark:text-orange-300 dark:bg-orange-400/10'
@@ -506,23 +736,23 @@ export default function ExecutionConsolePage() {
                   >
                     {log.level}
                   </Badge>
-                  <div className={cn("flex-1 whitespace-pre-wrap break-all", getLogLevelClass(log.level))}>
+                  <div className={cn("flex-1 whitespace-pre-wrap break-words", getLogLevelClass(log.level))}> {/* Changed break-all to break-words */}
                     <span dangerouslySetInnerHTML={{ __html: log.message.replace(/`(.*?)`/g, '<code class="bg-muted/80 dark:bg-muted/30 px-1 py-0.5 rounded text-foreground/80">$1</code>') }}></span>
                     {log.rawDetails && <pre className="mt-1 p-2 bg-muted/50 dark:bg-muted/20 rounded text-muted-foreground overflow-x-auto">{typeof log.rawDetails === 'string' ? log.rawDetails : JSON.stringify(log.rawDetails, null, 2)}</pre>}
                   </div>
                 </div>
               ))}
-               {logs.length <=1 && logs[0]?.id === 'init_log' && !isRunning && !currentTestExecutionId && (
+               {logs.length === 1 && logs[0]?.id.startsWith('init_log') && !isRunning && !currentTestExecutionId && (
                 <div className="text-center text-muted-foreground py-10">
-                  Select a scenario and server to start an execution.
+                  Select a scenario/packet and server to start an execution.
                 </div>
               )}
             </div>
           </ScrollArea>
         </CardContent>
         { (isRunning || currentTestExecutionId) && (
-             <CardFooter className="text-xs text-muted-foreground border-t pt-3">
-                {isRunning ? "Execution in progress..." : currentTestExecutionId ? `Execution finished. Status: ${logs.find(l => l.message.includes("simulation finished with status"))?.message.split("status: ")[1]?.split('.')[0] || "Unknown"}` : "Ready."}
+             <CardFooter className="text-xs text-muted-foreground border-t pt-3 flex-shrink-0">
+                {isRunning ? "Execution in progress..." : currentTestExecutionId ? `Execution finished. Status: ${logs.find(l => l.message.includes("simulation finished with status"))?.message.split("status: ")[1]?.split('.')[0] || "Concluded"}` : "Ready."}
              </CardFooter>
         )}
       </Card>
