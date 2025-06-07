@@ -713,11 +713,11 @@ export default function DatabaseValidationPage() {
                  {testDbResult.jumpServerConnectionResult && (
                      <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><KeyRound className="h-5 w-5"/>Jump Server Connection</CardTitle></CardHeader>
                      <CardContent>
-                        <p className={cn(testDbResult.jumpServerConnectionResult.status === 'success' ? "text-green-600" : "text-red-600")}>
+                        <div className={cn(testDbResult.jumpServerConnectionResult.status === 'success' ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400")}>
                             Status: <span className="font-semibold">{testDbResult.jumpServerConnectionResult.status.toUpperCase()}</span>
                             {testDbResult.jumpServerConnectionResult.error && <span className="ml-2 text-sm">({testDbResult.jumpServerConnectionResult.error})</span>}
-                            {testDbResult.jumpServerConnectionResult.output && <pre className="mt-1 text-xs whitespace-pre-wrap font-mono bg-muted p-2 rounded max-h-20 overflow-y-auto">{testDbResult.jumpServerConnectionResult.output}</pre>}
-                        </p>
+                            {testDbResult.jumpServerConnectionResult.output && <pre className="mt-1 text-xs whitespace-pre-wrap font-mono bg-muted dark:bg-muted/30 p-2 rounded max-h-20 overflow-y-auto">{testDbResult.jumpServerConnectionResult.output}</pre>}
+                        </div>
                      </CardContent></Card>
                  )}
 
@@ -733,10 +733,10 @@ export default function DatabaseValidationPage() {
                                 <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600 text-primary-foreground', step.status === 'failure' && 'bg-red-600 text-destructive-foreground')}>{step.status}</Badge>
                             </CardHeader>
                             {(step.output || step.error || step.command) && 
-                                <CardContent className="p-3 text-xs bg-muted/30">
-                                    <p className="text-muted-foreground font-mono mb-1">Command: <code className="text-foreground bg-background/50 px-1 rounded">{step.command}</code></p>
-                                    {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
-                                    {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 bg-red-500/10 p-2 rounded mt-1">{step.error}</pre>}
+                                <CardContent className="p-3 text-xs bg-muted/30 dark:bg-muted/20">
+                                    <p className="text-muted-foreground font-mono mb-1">Command: <code className="text-foreground bg-background/50 dark:bg-background/30 px-1 rounded">{step.command}</code></p>
+                                    {step.output && <pre className="whitespace-pre-wrap font-mono bg-background dark:bg-background/30 p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
+                                    {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 dark:text-red-400 bg-red-500/10 dark:bg-red-600/20 p-2 rounded mt-1">{step.error}</pre>}
                                 </CardContent>
                             }
                         </Card>
@@ -746,10 +746,10 @@ export default function DatabaseValidationPage() {
 
                 <Card><CardHeader><CardTitle className="text-lg">Target Database Connection</CardTitle></CardHeader>
                 <CardContent>
-                    <p className={cn(testDbResult.dbConnectionStatus === 'success' ? "text-green-600" : "text-red-600")}>
+                    <div className={cn(testDbResult.dbConnectionStatus === 'success' ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400")}>
                         Status: <span className="font-semibold">{testDbResult.dbConnectionStatus.toUpperCase()}</span>
                         {testDbResult.dbConnectionError && <span className="ml-2 text-sm">({testDbResult.dbConnectionError})</span>}
-                    </p>
+                    </div>
                 </CardContent></Card>
                 
                 {testDbResult.validationStepResults && testDbResult.validationStepResults.length > 0 && (
@@ -762,10 +762,10 @@ export default function DatabaseValidationPage() {
                                 <Badge variant={step.status === 'success' ? 'default' : step.status === 'failure' ? 'destructive' : 'outline'} className={cn(step.status === 'success' && 'bg-green-600 text-primary-foreground', step.status === 'failure' && 'bg-red-600 text-destructive-foreground')}>{step.status}</Badge>
                             </CardHeader>
                             {(step.output || step.error || (step.type === 'sql' ? step.query : step.command) ) && 
-                                <CardContent className="p-3 text-xs bg-muted/30">
-                                    <p className="text-muted-foreground font-mono mb-1">{step.type === 'sql' ? 'Query' : 'Command'}: <code className="text-foreground bg-background/50 px-1 rounded">{step.type === 'sql' ? step.query : step.command}</code></p>
-                                    {step.output && <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
-                                    {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 bg-red-500/10 p-2 rounded mt-1">{step.error}</pre>}
+                                <CardContent className="p-3 text-xs bg-muted/30 dark:bg-muted/20">
+                                    <p className="text-muted-foreground font-mono mb-1">{step.type === 'sql' ? 'Query' : 'Command'}: <code className="text-foreground bg-background/50 dark:bg-background/30 px-1 rounded">{step.type === 'sql' ? step.query : step.command}</code></p>
+                                    {step.output && <pre className="whitespace-pre-wrap font-mono bg-background dark:bg-background/30 p-2 rounded max-h-40 overflow-y-auto">{step.output}</pre>}
+                                    {step.error && <pre className="whitespace-pre-wrap font-mono text-red-600 dark:text-red-400 bg-red-500/10 dark:bg-red-600/20 p-2 rounded mt-1">{step.error}</pre>}
                                 </CardContent>
                             }
                         </Card>
