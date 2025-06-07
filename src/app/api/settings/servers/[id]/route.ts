@@ -43,7 +43,7 @@ export async function GET(request: NextRequest, { params }: { params: Params }) 
     return NextResponse.json(config);
   } catch (error) {
     console.error(`Failed to fetch server configuration ${params.id}:`, error);
-    return NextResponse.json({ message: `Failed to fetch server configuration ${params.id}`, error: (error as Error).message }, { status: 500 });
+    return NextResponse.json({ message: `Failed to fetch server configuration ${params.id}`, errorDetail: (error as Error).message }, { status: 500 });
   }
 }
 
@@ -104,13 +104,12 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
       params.id
     );
 
-    if (result.changes === 0) {
-        return NextResponse.json({ message: 'Server configuration not found or no changes made' }, { status: 404 });
-    }
+    // Removed 'changes === 0' check causing 404 when data is identical
     
     const updatedConfigFromDb = await db.get('SELECT * FROM server_configs WHERE id = ?', params.id);
      if (!updatedConfigFromDb) {
-      return NextResponse.json({ message: 'Failed to retrieve updated server configuration' }, { status: 500 });
+      // This should ideally not happen if the ID was valid
+      return NextResponse.json({ message: 'Failed to retrieve updated server configuration after update' }, { status: 500 });
     }
 
     const configToReturn: ServerConfig = {
@@ -125,9 +124,12 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     } as ServerConfig;
 
     return NextResponse.json(configToReturn);
-  } catch (error) {
-    console.error(`Failed to update server configuration ${params.id}:`, error);
-    return NextResponse.json({ message: `Failed to update server configuration ${params.id}`, error: (error as Error).message }, { status: 500 });
+  } catch (error: any) {
+    console.error(`API_ERROR: Failed to update server configuration ${params.id}:`, error.message, error.stack);
+    return NextResponse.json({ 
+      message: `Failed to update server configuration for ID ${params.id}. Please check server logs.`,
+      errorDetail: error.message || 'An unknown error occurred on the server.' 
+    }, { status: 500 });
   }
 }
 
@@ -144,7 +146,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Params 
     return NextResponse.json({ message: 'Server configuration deleted successfully' }, { status: 200 });
   } catch (error) {
     console.error(`Failed to delete server configuration ${params.id}:`, error);
-    return NextResponse.json({ message: `Failed to delete server configuration ${params.id}`, error: (error as Error).message }, { status: 500 });
+    return NextResponse.json({ message: `Failed to delete server configuration ${params.id}`, errorDetail: (error as Error).message }, { status: 500 });
   }
 }
 

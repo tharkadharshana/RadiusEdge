@@ -267,7 +267,6 @@ export default function ServerConfigPage() {
     }
   };
   
-  // Generic SshExecutionStep handler
   const handleSshStepChange = (
     listName: 'scenarioExecutionSshCommands' | 'connectionTestSshPreamble',
     index: number,
@@ -395,8 +394,8 @@ export default function ServerConfigPage() {
       
       const connectionPreambleClientSteps: ClientTestStep[] | undefined = configToTest.connectionTestSshPreamble?.map(s => ({
           name: s.name, command: s.command, isEnabled: s.isEnabled,
-          isMandatory: false, // Preamble steps are not typically mandatory in the same way as test steps
-          type: 'custom', // Treat preamble steps as custom for the flow
+          isMandatory: false, 
+          type: 'custom', 
           expectedOutputContains: s.expectedOutputContains || undefined,
       }));
 
@@ -420,7 +419,7 @@ export default function ServerConfigPage() {
         else {
             const configFailed = result.steps.find(s => s.stepName.toLowerCase().includes('validate radius config') && s.status === 'failure');
             if (configFailed) newStatus = 'error_config';
-            else newStatus = 'error_service'; // Generic if not SSH or config validation
+            else newStatus = 'error_service'; 
         }
       } else if (result.overallStatus === 'partial') newStatus = 'issues_found';
       
@@ -430,8 +429,25 @@ export default function ServerConfigPage() {
       });
 
       if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to update server status after test');
+          let errorFromServer = `Server responded with status ${response.status}.`;
+          try {
+            const errorData = await response.json();
+            console.error("CLIENT_ERROR: Full error data from server:", errorData);
+            if (errorData.message) {
+                errorFromServer = errorData.message;
+                if (errorData.errorDetail) { // Assuming API sends errorDetail
+                    errorFromServer += ` Details: ${errorData.errorDetail}`;
+                }
+            } else if (errorData.error) { // Fallback if only 'error' field is present
+                errorFromServer = `Server error: ${errorData.error}`;
+            }
+          } catch (e) {
+            console.error("CLIENT_ERROR: Failed to parse error response as JSON:", e);
+            const responseText = await response.text().catch(() => "Could not get text from error response.");
+            errorFromServer += ` Response was not valid JSON. Response text: ${responseText.substring(0, 200)}`;
+          }
+          toast({ title: "Update Failed", description: errorFromServer, variant: "destructive", duration: 10000 });
+          throw new Error(errorFromServer); 
       }
       const savedConfigWithStatus: ServerConfig = await response.json();
       setConfigs(prev => prev.map(c => c.id === savedConfigWithStatus.id ? savedConfigWithStatus : c));
