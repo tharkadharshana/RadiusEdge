@@ -103,8 +103,8 @@ export class ApiService {
     }
     // Basic mock validation for rules
     if (validationRules && validationRules.length > 0) {
-        // For mock, let's just assume rules pass if no major error
-        console.log(`[API_MOCK] Mock validation assumes rules passed for status ${response.status}.`);
+        // console.log(`[API_MOCK] Mock validation assumes rules passed for status ${response.status}.`); // Original line, can be removed or kept if desired
+        console.warn(`[API_MOCK] INFO: Received ${validationRules.length} validation rule(s) for response with status ${response.status}. However, this mock service does not actually process these rules beyond checking the HTTP status code. All rule-based validation is assumed to pass if the status code matches expectations.`);
     }
     console.log('[API_MOCK] Simulated validation successful.');
     return true;

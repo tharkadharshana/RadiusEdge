@@ -57,6 +57,7 @@ export class SshService {
         return;
       } catch (error: unknown) {
         if (attempt === retries) {
+          this.connectionConfig = null; // Explicitly set to null on final failure
           throw new Error(`Simulated: Failed to connect after ${retries} attempts: ${error instanceof Error ? error.message : String(error)}`);
         }
         console.warn(`Simulated: Connection attempt ${attempt} failed, retrying in ${retryDelay}ms...`);

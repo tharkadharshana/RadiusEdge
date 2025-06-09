@@ -60,7 +60,12 @@ export class RadiusService {
     const toolOptions = packetData.toolOptions || {};
     const targetHost = this.resolveVariable(serverConfig.host, scenarioVariables);
     const targetPort = serverConfig.radiusAuthPort; // Assuming auth port for now
-    const secret = this.resolveVariable(serverConfig.defaultSecret || (toolOptions as any).secret || 'YOUR_SECRET_HERE', scenarioVariables);
+    let resolvedSecretValue = serverConfig.defaultSecret || (toolOptions as any).secret;
+    if (!resolvedSecretValue) {
+      console.warn(`[RADIUS_MOCK] No secret found in serverConfig.defaultSecret or toolOptions.secret for host ${targetHost}. Defaulting to an empty secret for simulation. Ensure a secret is configured if expected.`);
+      resolvedSecretValue = ''; // Default to empty string
+    }
+    const secret = this.resolveVariable(resolvedSecretValue, scenarioVariables);
 
     let commandOutput = `Simulating ${tool} execution...\n`;
     commandOutput += `Target: ${targetHost}:${targetPort}\n`;
